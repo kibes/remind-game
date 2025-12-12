@@ -63,21 +63,19 @@ h1 {
     color: #db4e4e; 
     font-weight: 800;
     letter-spacing: 1px;
-    margin-bottom: 5px;
 }
 
 .stats { 
     display: flex; 
     justify-content: center; 
     gap: 25px; 
-    margin-top: 10px; 
     white-space: nowrap; 
 }
 
 .stat-label { 
-    font-size: 12px; 
+    font-size: 14px; 
     color: #db4e4e; 
-    text-transform: uppercase; 
+    text-transform: lowercase; 
     font-weight: 500;
 }
 
@@ -442,6 +440,8 @@ h1 {
     text-align: center;
     text-transform: lowercase;
     flex-shrink: 0;
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 500;
 }
 
 /* Информационная часть результатов */
