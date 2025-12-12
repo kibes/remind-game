@@ -1,0 +1,546 @@
+/* Сброс стилей и базовые настройки */
+* { 
+    margin: 0; 
+    padding: 0; 
+    box-sizing: border-box; 
+    
+    /* ТОЛЬКО ЭТИ ОПТИМИЗАЦИИ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ */
+    -webkit-tap-highlight-color: transparent; /* Убирает задержку при тапе */
+    backface-visibility: hidden; /* Улучшает анимации */
+    -webkit-font-smoothing: antialiased; /* Улучшает рендеринг шрифтов */
+}
+
+/* Основной фон и центрирование */
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: #db4e4e;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 10px;
+    
+    /* ОПТИМИЗАЦИЯ ДЛЯ МОБИЛЬНЫХ */
+    overflow: hidden; /* Предотвращает скролл */
+    position: fixed; /* Фиксирует viewport */
+    width: 100%;
+    height: 100vh;
+}
+
+/* Основной контейнер игры - БЕЗ ИЗМЕНЕНИЙ РАЗМЕРОВ */
+.game-container {
+    width: 100%;
+    max-width: 100%;
+    background: white;
+    border-radius: 45px;
+    padding: 15px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 20px);
+    margin: auto;
+    position: relative;
+    overflow: hidden;
+    max-width: 800px;
+    max-height: 800px;
+    
+    /* УСКОРЕНИЕ РЕНДЕРИНГА */
+    will-change: transform;
+    transform: translateZ(0); /* Аппаратное ускорение */
+}
+
+/* Заголовок и Статистика - БЕЗ ИЗМЕНЕНИЙ */
+.header { 
+    text-align: center; 
+    font-family: 'Montserrat', sans-serif;
+    margin-top: 20px; 
+    margin-bottom: 10px; 
+    flex-shrink: 0; 
+}
+
+h1 { 
+    font-size: 36px; 
+    color: #db4e4e; 
+    font-weight: 800;
+    letter-spacing: 1px;
+    margin-bottom: 5px;
+}
+
+.stats { 
+    display: flex; 
+    justify-content: center; 
+    gap: 25px; 
+    margin-top: 10px; 
+    white-space: nowrap; 
+}
+
+.stat-label { 
+    font-size: 12px; 
+    color: #db4e4e; 
+    text-transform: uppercase; 
+    font-weight: 500;
+}
+
+.stat-value { 
+    font-size: 24px; 
+    font-weight: 700;
+    color: #333; 
+    transition: transform 0.3s ease; /* Оптимизирован transition */
+}
+
+.stat-value.updating { 
+    transform: scale(1.2); 
+    color: #db4e4e; 
+}
+
+/* Игровая область */
+.game-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    opacity: 1;
+    visibility: visible;
+    
+    /* ОПТИМИЗИРОВАННЫЕ TRANSITION */
+    transition: opacity 0.4s ease, visibility 0.4s ease;
+    min-height: 0;
+    
+    /* АППАРАТНОЕ УСКОРЕНИЕ */
+    transform: translateZ(0);
+}
+
+.game-content.hidden { 
+    opacity: 0; 
+    pointer-events: none; 
+    visibility: hidden; 
+}
+
+/* Область отображения персонажа */
+.character-display {
+    width: 100%;
+    max-width: 380px;
+    flex: 1;
+    min-height: 200px;
+    max-height: 480px;
+    position: relative;
+    border: 2px solid #db4e4e;
+    border-radius: 30px;
+    background: #fff;
+    overflow: hidden;
+    margin-top: 5px;
+    
+    /* УСКОРЕНИЕ РЕНДЕРИНГА */
+    contain: layout style paint; /* Оптимизация для браузера */
+    will-change: transform;
+}
+
+@media (max-height: 500px) {
+    .character-display {
+        max-height: 250px;
+    }
+}
+
+.character-layer {
+    position: absolute;
+    top: 0; 
+    left: 0; 
+    width: 100%; 
+    height: 100%;
+    background-size: contain; 
+    background-repeat: no-repeat; 
+    background-position: center bottom;
+    
+    /* ОПТИМИЗАЦИЯ АНИМАЦИЙ */
+    will-change: transform, opacity;
+}
+
+/* Информационная секция */
+.info-section {
+    height: 120px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    width: 100%;
+    flex-shrink: 0;
+    position: relative;
+    justify-content: flex-start;
+    padding-top: 15px;
+    font-family: 'Comfortaa', cursive;
+    font-weight: 500;
+}
+
+.instruction { 
+    font-size: 22px;
+    color: #db4e4e; 
+    font-weight: 600;
+    opacity: 0; 
+    transform: translateY(10px);
+    
+    /* ОПТИМИЗИРОВАННАЯ АНИМАЦИЯ */
+    transition: opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
+                transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    min-height: 26px;
+    margin-top: 10px;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    
+    /* ПРЕДОТВРАЩЕНИЕ СКАЧКОВ ТЕКСТА */
+    backface-visibility: hidden;
+}
+
+.instruction.show { 
+    opacity: 1; 
+    transform: translateY(0); 
+}
+
+/* Таймер */
+.timer { 
+    font-size: 100px;
+    font-weight: 800;
+    color: #db4e4e; 
+    opacity: 0; 
+    line-height: 1;
+    position: absolute;
+    top: 60px;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    
+    /* БЫСТРЫЙ TRANSITION */
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+    z-index: 5;
+    font-family: 'Montserrat', sans-serif;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+    
+    /* ОПТИМИЗАЦИЯ */
+    will-change: opacity;
+}
+
+.timer.show { 
+    opacity: 1;
+}
+
+.timer-digit {
+    display: inline-block;
+    position: relative;
+}
+
+.timer-digit.changing {
+    animation: timerChange 0.3s ease;
+    
+    /* УСКОРЕНИЕ АНИМАЦИИ */
+    backface-visibility: hidden;
+}
+
+@keyframes timerChange {
+    0% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.1);
+        opacity: 0.9;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* Управление (кнопки) */
+.controls-container {
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    z-index: 10;
+    flex-shrink: 0;
+    margin-top: auto;
+    padding-top: 60px;
+    position: relative;
+}
+
+.btn {
+    background: #db4e4e;
+    color: white;
+    border: none;
+    padding: 20px 45px;
+    font-size: 20px;
+    border-radius: 30px;
+    cursor: pointer;
+    font-weight: 600;
+    
+    /* ОПТИМИЗИРОВАННЫЕ АНИМАЦИИ */
+    transition: background-color 0.2s ease, 
+                transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    margin-bottom: 150px;
+    opacity: 1;
+    transform: scale(1);
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 600;
+    white-space: nowrap;
+    
+    /* УЛУЧШЕНИЕ ДЛЯ TOUCH */
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    
+    /* ПРЕДОТВРАЩЕНИЕ МЕЛЬКАНИЯ */
+    backface-visibility: hidden;
+}
+
+.btn:hover { 
+    background: #c93c3c; 
+    transform: translateY(-2px) scale(1.02); 
+}
+
+.btn:active { 
+    transform: translateY(0) scale(0.99); 
+    transition-duration: 0.05s; /* Быстрая анимация нажатия */
+}
+
+.btn.hidden { 
+    display: none; 
+    opacity: 0;
+    transform: scale(0.8);
+}
+
+.btn.show { 
+    display: block; 
+    animation: buttonAppear 0.2s ease forwards;
+}
+
+@keyframes buttonAppear {
+    0% {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* НОВЫЙ ЭКРАН РЕЗУЛЬТАТОВ */
+.result-screen {
+    position: absolute;
+    top: 130px;
+    padding: 15px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    opacity: 0;
+    visibility: hidden;
+    
+    /* БЫСТРЫЕ TRANSITION */
+    transition: opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
+                visibility 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    background: white;
+    z-index: 20;
+    overflow: hidden;
+    justify-content: space-between;
+    
+    /* АППАРАТНОЕ УСКОРЕНИЕ */
+    transform: translateZ(0);
+}
+
+.result-screen.show { 
+    opacity: 1; 
+    visibility: visible; 
+}
+
+/* Контейнер для сравнения персонажей */
+.result-comparison {
+    display: flex;
+    width: 100%;
+    min-height: 0;
+    gap: 20px;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    flex: 1 1 auto;
+    max-height: 60%;
+}
+
+/* Карточка персонажа в результатах */
+.result-character-card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 0;
+    max-width: 100%;
+    height: 100%;
+    min-height: 100px;
+}
+
+/* Отображение персонажа в результатах */
+.result-character-display {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    border: 2px solid #db4e4e;
+    border-radius: 30px;
+    background: #fff;
+    overflow: hidden;
+    margin-bottom: 8px;
+    max-height: 180px;
+    min-height: 140px;
+    
+    /* УСКОРЕНИЕ */
+    contain: layout style paint;
+}
+
+/* Горизонтальное расположение для широких экранов */
+@media (min-width: 500px) {
+    .result-comparison {
+        flex-direction: row;
+        min-height: 200px;
+        max-height: 70%;
+    }
+
+    .result-character-display {
+        max-height: 400px;
+        min-height: 180px;
+    }
+    
+    .result-character-card {
+        max-width: 320px;
+    }
+}
+
+/* Вертикальное расположение для узких экранов */
+@media (max-width: 499px) {
+    .result-comparison {
+        flex-direction: column;
+        max-height: none;
+        gap: 10px;
+    }
+
+    .result-character-display {
+        max-height: none;
+        min-height: 0;
+    }
+    
+    .result-character-card {
+        width: 100%;
+        min-height: 75px;
+        max-width: 450px;
+    }
+}
+
+.result-character-label {
+    font-size: 16px;
+    color: #db4e4e;
+    font-weight: 500;
+    text-align: center;
+    text-transform: lowercase;
+    flex-shrink: 0;
+}
+
+/* Информационная часть результатов */
+.result-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    width: 100%;
+    padding: 10px 0;
+    flex-shrink: 0;
+    min-height: 80px;
+    max-height: 120px;
+    white-space: nowrap;
+    font-family: 'Comfortaa', cursive;
+    font-weight: 500;
+}
+
+.result-percent {
+    font-size: 52px;
+    font-weight: 800;
+    color: #db4e4e;
+    margin-bottom: 8px;
+    line-height: 1;
+    font-family: 'Montserrat', sans-serif;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+}
+
+.result-text {
+    font-size: 22px;
+    font-weight: 600;
+    color: #db4e4e;
+    min-height: 30px;
+}
+
+/* Кнопка в результатах */
+.result-controls-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 30px;
+    width: 100%;
+    flex-shrink: 0;
+}
+
+.result-btn {
+    background: #db4e4e;
+    color: white;
+    border: none;
+    padding: 20px 45px;
+    font-size: 20px;
+    border-radius: 30px;
+    cursor: pointer;
+    font-weight: 600;
+    
+    /* ОПТИМИЗИРОВАННЫЕ АНИМАЦИИ */
+    transition: background-color 0.2s ease, 
+                transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 1;
+    transform: scale(1);
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 600;
+    
+    /* УЛУЧШЕНИЕ ДЛЯ TOUCH */
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    backface-visibility: hidden;
+}
+
+.result-btn:hover { 
+    background: #c93c3c; 
+    transform: translateY(-3px) scale(1.02);
+}
+
+.result-btn:active { 
+    transform: translateY(0) scale(0.99); 
+    transition-duration: 0.05s;
+}
+
+/* ОПТИМИЗАЦИЯ ДЛЯ TELEGRAM И МОБИЛЬНЫХ */
+@media (hover: none) {
+    .btn:hover, .result-btn:hover {
+        transform: none !important; /* Отключаем hover эффекты на touch устройствах */
+    }
+    
+    .btn:active, .result-btn:active {
+        transform: scale(0.97) !important;
+        transition-duration: 0.1s;
+    }
+}
+
+/* ПРЕДОТВРАЩЕНИЕ ЗУМА НА IOS */
+@media (pointer: coarse) {
+    input, textarea, button, select {
+        font-size: 16px; /* Предотвращает автоматический зум на iOS */
+    }
+}
