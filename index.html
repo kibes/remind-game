@@ -2,12 +2,15 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     
     <!-- ТОЛЬКО ЭТИ МЕТА-ТЕГИ ДЛЯ TELEGRAM -->
     <meta name="telegram-web-app-capable" content="yes">
     <meta name="telegram-web-app-status-bar-style" content="black">
     <meta name="telegram-web-app-title" content="bemind">
+    
+    <!-- Предотвращение зума на iOS -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
     
     <title>bemind</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -27,12 +30,12 @@
                     <div class="stat-value" id="round">1</div>
                 </div>
                 <div class="stat">
-                    <div class="stat-label">Рекорд</div>
-                    <div class="stat-value" id="max-streak">0</div>
+                    <div class="stat-label">Серия</div>
+                    <div class="stat-value" id="streak">0</div>
                 </div>
                 <div class="stat">
-                    <div class="stat-label">Серия побед</div>
-                    <div class="stat-value" id="streak">0</div>
+                    <div class="stat-label">Рекорд</div>
+                    <div class="stat-value" id="max-streak">0</div>
                 </div>
             </div>
         </div>
