@@ -6,7 +6,7 @@ if (window.Telegram && window.Telegram.WebApp) {
     tg.enableClosingConfirmation(); // Включаем подтверждение закрытия
 }
 
-// Основной объект состояния игры - ВСЕ РАЗМЕРЫ И ПАРАМЕТРЫ СОХРАНЕНЫ
+// Основной объект состояния игры
 const state = {
     round: 1,
     maxStreak: 0,
@@ -29,7 +29,14 @@ const state = {
     fastCycle: null,
     startBtnLock: false,
     resetBtnLock: false,
-    isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+    isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
+    audioContext: null,
+    isFirstChangeInCycle: true,
+    isTimerPlaying: false,
+    audioContextActivated: false,
+    userInteracted: false,
+    soundsLoaded: false, // Флаг загрузки звуков
+    useSimpleAudio: true // Использовать простой Audio вместо AudioContext
 };
 
 // Ссылки на DOM элементы
@@ -50,6 +57,272 @@ const elements = {
     resultTarget: document.getElementById('result-target'),
     resultPlayer: document.getElementById('result-player')
 };
+
+// Объект для хранения звуков
+const audio = {
+    start: null,
+    choose: null,
+    repeat: null,
+    timer: null,
+    change: null,
+    next: null,
+    result: null,
+    victory: null,
+    vic: null,
+    loss: null
+};
+
+// Функция для создания аудио элемента
+function createAudioElement(src) {
+    const audioElement = new Audio();
+    
+    // Для локального тестирования (file://) не устанавливаем crossOrigin
+    if (window.location.protocol !== 'file:') {
+        audioElement.crossOrigin = 'anonymous';
+    }
+    
+    audioElement.preload = 'auto';
+    audioElement.src = src;
+    
+    // Загружаем аудио
+    audioElement.load();
+    
+    return audioElement;
+}
+
+// Функция для инициализации всех звуков
+function initAudio() {
+    // Создаем все аудио элементы
+    audio.start = createAudioElement('sounds/start.mp3');
+    audio.choose = createAudioElement('sounds/choose.mp3');
+    audio.repeat = createAudioElement('sounds/repeat.mp3');
+    audio.timer = createAudioElement('sounds/timer.mp3');
+    audio.change = createAudioElement('sounds/change.mp3');
+    audio.next = createAudioElement('sounds/next.mp3');
+    audio.result = createAudioElement('sounds/result.mp3');
+    audio.victory = createAudioElement('sounds/victory.mp3');
+    audio.vic = createAudioElement('sounds/vic.mp3');
+    audio.loss = createAudioElement('sounds/loss.mp3');
+    
+    // Настройка громкости
+    audio.next.volume = 0.6;
+    
+    state.soundsLoaded = true;
+    console.log("Аудио элементы инициализированы");
+}
+
+// Функция для воспроизведения звука
+function playSound(soundName) {
+    try {
+        const sound = audio[soundName];
+        if (!sound) return;
+        
+        // Если звук еще не загружен, пытаемся загрузить
+        if (sound.readyState === 0) {
+            sound.load();
+        }
+        
+        // Сбрасываем воспроизведение
+        sound.currentTime = 0;
+        
+        // Пробуем воспроизвести
+        const playPromise = sound.play();
+        
+        if (playPromise !== undefined) {
+            playPromise.catch(e => {
+                console.log(`Аудио ${soundName} не может быть воспроизведено:`, e);
+                // Пробуем снова через небольшой промежуток
+                setTimeout(() => {
+                    try {
+                        sound.currentTime = 0;
+                        sound.play().catch(() => {});
+                    } catch (err) {
+                        console.log("Повторная попытка воспроизведения не удалась:", err);
+                    }
+                }, 100);
+            });
+        }
+    } catch (e) {
+        console.log("Ошибка воспроизведения звука:", e);
+    }
+}
+
+// Функция для воспроизведения тихого звука next.mp3
+function playQuietNextSound() {
+    try {
+        const sound = audio.next;
+        if (!sound) return;
+        
+        const originalVolume = sound.volume;
+        sound.volume = originalVolume * 0.3;
+        sound.currentTime = 0;
+        
+        const playPromise = sound.play();
+        
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                setTimeout(() => {
+                    sound.volume = originalVolume;
+                }, 100);
+            }).catch(e => {
+                console.log("Тихий next.mp3 не может быть воспроизведен:", e);
+                sound.volume = originalVolume;
+            });
+        } else {
+            setTimeout(() => {
+                sound.volume = originalVolume;
+            }, 100);
+        }
+    } catch (e) {
+        console.log("Ошибка воспроизведения тихого next.mp3:", e);
+    }
+}
+
+// Функция для звука таймера с разной тональностью
+function playTimerSound(number) {
+    if (state.isTimerPlaying) {
+        return;
+    }
+    
+    try {
+        // Создаем новый аудио элемент каждый раз для избежания CORS проблем
+        const sound = new Audio('sounds/timer.mp3');
+        
+        // Настраиваем скорость воспроизведения для разных тональностей
+        let playbackRate = 1.0;
+        switch(number) {
+            case 5: playbackRate = 0.7; break;
+            case 4: playbackRate = 0.8; break;
+            case 3: playbackRate = 0.9; break;
+            case 2: playbackRate = 1.1; break;
+            case 1: playbackRate = 1.3; break;
+            default: playbackRate = 1.0;
+        }
+        
+        sound.playbackRate = playbackRate;
+        sound.currentTime = 0;
+        sound.volume = 1;
+        
+        state.isTimerPlaying = true;
+        
+        // Пытаемся воспроизвести
+        const playPromise = sound.play();
+        
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                sound.onended = () => {
+                    state.isTimerPlaying = false;
+                };
+            }).catch(e => {
+                console.log("Таймер аудио не может быть воспроизведено:", e);
+                state.isTimerPlaying = false;
+                
+                // Фолбэк: пробуем использовать основной аудио элемент
+                try {
+                    if (audio.timer) {
+                        audio.timer.currentTime = 0;
+                        audio.timer.playbackRate = playbackRate;
+                        audio.timer.play().catch(() => {});
+                    }
+                } catch (err) {
+                    console.log("Фолбэк таймера также не сработал:", err);
+                }
+            });
+        }
+        
+    } catch (e) {
+        console.log("Ошибка воспроизведения звука таймера:", e);
+        state.isTimerPlaying = false;
+    }
+}
+
+// Функция для активации аудио системы
+function activateAudioSystem() {
+    return new Promise((resolve) => {
+        // Инициализируем аудио если еще не инициализировано
+        if (!state.soundsLoaded) {
+            initAudio();
+        }
+        
+        // Активируем AudioContext только если он нужен и поддерживается
+        if (state.useSimpleAudio) {
+            // Используем простой Audio - не нужен AudioContext
+            console.log("Используется простой Audio API");
+            state.audioContextActivated = true;
+            resolve(true);
+            return;
+        }
+        
+        // Старая логика AudioContext (на всякий случай)
+        if (!state.audioContext && window.AudioContext) {
+            try {
+                state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                console.log("AudioContext создан");
+            } catch (e) {
+                console.log("AudioContext не поддерживается:", e);
+                state.audioContext = null;
+                state.useSimpleAudio = true;
+                resolve(true);
+                return;
+            }
+        }
+        
+        if (state.audioContext) {
+            if (state.audioContext.state === 'suspended') {
+                state.audioContext.resume().then(() => {
+                    console.log("AudioContext активирован");
+                    state.audioContextActivated = true;
+                    resolve(true);
+                }).catch(err => {
+                    console.log("Не удалось активировать AudioContext:", err);
+                    state.audioContextActivated = true;
+                    state.useSimpleAudio = true;
+                    resolve(true);
+                });
+            } else {
+                state.audioContextActivated = true;
+                resolve(true);
+            }
+        } else {
+            state.audioContextActivated = true;
+            state.useSimpleAudio = true;
+            resolve(true);
+        }
+    });
+}
+
+// Функция для принудительной активации при первом взаимодействии
+function ensureAudio() {
+    if (!state.userInteracted) {
+        state.userInteracted = true;
+        console.log("Первое взаимодействие пользователя, активируем аудио");
+        
+        // Инициализируем аудио
+        initAudio();
+        
+        // Пробуем воспроизвести короткий тихий звук для разблокировки аудио
+        try {
+            // Создаем пустой звук для разблокировки
+            const testAudio = new Audio();
+            testAudio.volume = 0.01;
+            
+            // Короткий звук в формате base64
+            const emptyAudio = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAZGF0YQ';
+            testAudio.src = emptyAudio;
+            
+            testAudio.play().then(() => {
+                setTimeout(() => {
+                    testAudio.pause();
+                }, 100);
+            }).catch(() => {});
+        } catch (e) {
+            console.log("Ошибка тестового звука:", e);
+        }
+        
+        // Активируем аудио систему
+        activateAudioSystem();
+    }
+}
 
 // ОПТИМИЗАЦИЯ: Предзагрузка critical изображений
 function preloadCriticalImages() {
@@ -86,7 +359,6 @@ function getRandomOrderItem(type, index) {
 async function loadImages() {
     const folders = { skin: 'skins/', head: 'heads/', body: 'bodies/', accessory: 'accessories/' };
     
-    // Начинаем предзагрузку критических изображений
     preloadCriticalImages();
     
     for (const type of state.parts) {
@@ -97,7 +369,6 @@ async function loadImages() {
             const img = new Image();
             img.src = `${folders[type]}${i}.png`;
             
-            // Параллельная загрузка изображений
             loadPromises.push(new Promise(r => { 
                 img.onload = r; 
                 img.onerror = () => { r(); };
@@ -106,14 +377,12 @@ async function loadImages() {
             state.loaded[type].push({ id: i, img: img });
         }
         
-        // Ждем загрузки всех изображений типа
         await Promise.all(loadPromises);
     }
 }
 
 // Отрисовка персонажа в указанном контейнере
 function render(container, data) {
-    // ОПТИМИЗАЦИЯ: Используем DocumentFragment для batch обновления
     const fragment = document.createDocumentFragment();
     state.parts.forEach(p => {
         if (data[p]) {
@@ -124,7 +393,6 @@ function render(container, data) {
         }
     });
     
-    // ОПТИМИЗАЦИЯ: Один раз очищаем и добавляем все элементы
     container.innerHTML = '';
     container.appendChild(fragment);
 }
@@ -157,7 +425,6 @@ function startIdle() {
     
     render(elements.characterDisplay, state.idleCharacter);
     
-    // ОПТИМИЗАЦИЯ: Используем requestAnimationFrame для плавной анимации
     let lastTime = 0;
     const animateIdle = (timestamp) => {
         if (!state.idleInterval) return;
@@ -180,7 +447,6 @@ function startIdle() {
         }
     };
     
-    // Очищаем предыдущий интервал
     if (state.idleInterval) {
         cancelAnimationFrame(state.idleInterval);
     }
@@ -210,7 +476,7 @@ function hideButtonWithAnimation(button) {
 }
 
 // Функция для анимации смены цифр таймера
-function animateTimerChange() {
+function animateTimerChange(timerNumber) {
     const timer = elements.timer;
     if (timer.textContent && timer.textContent.trim()) {
         const digitSpan = document.createElement('span');
@@ -218,6 +484,9 @@ function animateTimerChange() {
         digitSpan.textContent = timer.textContent;
         timer.innerHTML = '';
         timer.appendChild(digitSpan);
+        
+        // Проигрываем звук таймера
+        playTimerSound(timerNumber);
         
         setTimeout(() => {
             if (digitSpan.parentNode === timer) {
@@ -239,6 +508,9 @@ function startGame() {
     state.isBusy = true;
     state.gamePhase = 'creating';
     
+    // Проигрываем звук начала игры
+    playSound('start');
+    
     stopIdle();
     
     elements.instruction.classList.remove('show');
@@ -251,16 +523,18 @@ function startGame() {
     
     let duration = 0;
     if (state.fastCycle) {
-        clearInterval(state.fastCycle);
+        cancelAnimationFrame(state.fastCycle);
         state.fastCycle = null;
     }
     
-    // ОПТИМИЗАЦИЯ: Используем requestAnimationFrame для плавной анимации
     let lastTime = 0;
+    let lastSoundTime = 0;
+    const soundInterval = 100;
+    
     const animateCreation = (timestamp) => {
         if (!state.fastCycle) return;
         
-        if (timestamp - lastTime > 100) {
+        if (timestamp - lastTime > 50) {
             lastTime = timestamp;
             const temp = {};
             state.parts.forEach(p => {
@@ -268,9 +542,15 @@ function startGame() {
                 temp[p] = getRandomOrderItem(p, randomIndex);
             });
             render(elements.characterDisplay, temp);
-            duration += 100;
+            duration += 50;
+            
+            if (timestamp - lastSoundTime >= soundInterval) {
+                playSound('change');
+                lastSoundTime = timestamp;
+            }
             
             if (duration >= 2000) {
+                cancelAnimationFrame(state.fastCycle);
                 state.fastCycle = null;
                 finalizeTarget();
                 return;
@@ -278,7 +558,7 @@ function startGame() {
         }
         
         if (state.gamePhase === 'creating') {
-            requestAnimationFrame(animateCreation);
+            state.fastCycle = requestAnimationFrame(animateCreation);
         }
     };
     
@@ -303,6 +583,8 @@ function finalizeTarget() {
         state.target[p] = getRandomOrderItem(p, randomIndex);
     });
     
+    playSound('result');
+    
     render(elements.characterDisplay, state.target);
     
     setTimeout(() => {
@@ -316,12 +598,14 @@ function finalizeTarget() {
             elements.timer.classList.add('show');
             state.isTimerActive = true;
             
-            animateTimerChange();
+            setTimeout(() => {
+                animateTimerChange(timeLeft);
+            }, 100);
             
             const t = setInterval(() => {
                 timeLeft--;
                 elements.timer.textContent = timeLeft;
-                animateTimerChange();
+                animateTimerChange(timeLeft);
                 
                 if (timeLeft <= 0) {
                     clearInterval(t);
@@ -343,6 +627,7 @@ function startSelecting() {
     state.selection = {};
     state.canSelect = true;
     state.isBusy = false;
+    state.isFirstChangeInCycle = true;
 
     elements.instruction.classList.remove('show');
     
@@ -384,15 +669,26 @@ function nextCycle() {
         idx = (idx + 1) % state.partCounts[type];
         state.selection[type] = getRandomOrderItem(type, idx);
         render(elements.characterDisplay, state.selection);
+        
+        if (state.currentPart === 0 || !state.isFirstChangeInCycle) {
+            playSound('next');
+        }
+        state.isFirstChangeInCycle = false;
     };
     
     if (state.currentPart === 0) {
         idx = -1;
     }
     
+    if (state.currentPart > 0) {
+        playQuietNextSound();
+        state.isFirstChangeInCycle = false;
+    } else {
+        state.isFirstChangeInCycle = true;
+    }
+    
     cycle();
     
-    // ОПТИМИЗАЦИЯ: Используем setInterval для точного времени
     state.interval = setInterval(cycle, finalSpeed);
 }
 
@@ -411,6 +707,8 @@ function select() {
     if (!state.canSelect || state.gamePhase !== 'selecting') {
         return false;
     }
+    
+    playSound('choose');
     
     state.canSelect = false;
     
@@ -481,7 +779,14 @@ function finish() {
         state.resetBtnLock = false;
         state.isBusy = false;
         
-        // Telegram интеграция
+        if (p === 100) {
+            playSound('victory');
+        } else if (p >= 75) {
+            playSound('vic');
+        } else {
+            playSound('loss')
+        }
+        
         if (tg && tg.sendData) {
             const gameData = {
                 round: state.round,
@@ -497,6 +802,8 @@ function finish() {
 // Сброс игры для нового раунда
 function reset() {
     if (state.resetBtnLock || state.isBusy) return;
+    
+    playSound('repeat');
     
     state.resetBtnLock = true;
     elements.resultAgainBtn.disabled = true;
@@ -565,13 +872,16 @@ window.addEventListener('keydown', e => {
         if (state.isTimerActive || state.isBusy || state.gamePhase === 'memorizing' || state.gamePhase === 'creating') return;
         if (state.gamePhase === 'selecting' && elements.selectBtn.classList.contains('hidden')) return;
         
-        if (state.gamePhase === 'idle' && !state.startBtnLock && !elements.startBtn.classList.contains('hidden')) {
-            startGame();
-        } else if (state.gamePhase === 'selecting' && state.canSelect) {
-            select();
-        } else if (state.gamePhase === 'finished' && !state.resetBtnLock) {
-            reset();
-        }
+        ensureAudio();
+        activateAudioSystem().then(() => {
+            if (state.gamePhase === 'idle' && !state.startBtnLock && !elements.startBtn.classList.contains('hidden')) {
+                startGame();
+            } else if (state.gamePhase === 'selecting' && state.canSelect) {
+                select();
+            } else if (state.gamePhase === 'finished' && !state.resetBtnLock) {
+                reset();
+            }
+        });
     }
 });
 
@@ -579,6 +889,7 @@ window.addEventListener('keydown', e => {
 document.addEventListener('touchstart', function(e) {
     if (e.target.tagName === 'BUTTON') {
         e.target.style.transform = 'scale(0.97)';
+        ensureAudio();
     }
 }, { passive: true });
 
@@ -590,7 +901,10 @@ document.addEventListener('touchend', function(e) {
 
 // Назначение обработчиков событий для кнопок
 elements.startBtn.onclick = function() {
-    startGame();
+    ensureAudio();
+    activateAudioSystem().then(() => {
+        startGame();
+    });
 };
 
 elements.selectBtn.onclick = function() {
@@ -598,8 +912,32 @@ elements.selectBtn.onclick = function() {
 };
 
 elements.resultAgainBtn.onclick = function() {
-    reset();
+    ensureAudio();
+    activateAudioSystem().then(() => {
+        reset();
+    });
 };
+
+// Предотвращение зума на двойной тап
+document.addEventListener('touchend', function(e) {
+    const now = Date.now();
+    if (now - (window.lastTouchEnd || 0) < 300) {
+        e.preventDefault();
+    }
+    window.lastTouchEnd = now;
+}, { passive: false });
+
+// Запрет выделения текста
+document.addEventListener('selectstart', function(e) {
+    e.preventDefault();
+    return false;
+});
+
+// Запрет контекстного меню
+document.addEventListener('contextmenu', function(e) {
+    e.preventDefault();
+    return false;
+});
 
 // Инициализация игры при загрузке страницы
 window.onload = async () => {
@@ -617,4 +955,26 @@ window.onload = async () => {
     document.addEventListener('gesturestart', function(e) {
         e.preventDefault();
     });
+    
+    // Активация аудио при первом взаимодействии
+    document.addEventListener('click', function initAudio() {
+        ensureAudio();
+        activateAudioSystem().then(() => {
+            console.log("Аудио система активирована");
+            
+            // Пробуем воспроизвести короткий звук для проверки
+            try {
+                const testSound = new Audio();
+                testSound.volume = 0.01;
+                testSound.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAZGF0YQ';
+                testSound.play().then(() => {
+                    setTimeout(() => {
+                        testSound.pause();
+                    }, 100);
+                }).catch(() => {});
+            } catch(e) {}
+        });
+        
+        document.removeEventListener('click', initAudio);
+    }, { once: true });
 };
