@@ -592,8 +592,8 @@ function nextCycle() {
     if (state.currentPart >= state.parts.length) { finish(); return; }
     
     const type = state.parts[state.currentPart];
-    let baseSpeed = 1200 - (state.currentPart * 200);
-    let finalSpeed = state.streak > 0 ? baseSpeed * Math.pow(0.95, state.streak) : baseSpeed;
+    let baseSpeed = 1200 - (state.currentPart * 100);
+    let finalSpeed = state.streak > 0 ? baseSpeed * Math.pow(0.97, state.streak) : baseSpeed;
     finalSpeed = Math.max(finalSpeed, 200);
     
     let idx = 0;
@@ -709,13 +709,17 @@ function reset() {
     state.canPressSpace = false;
     elements.resultAgainBtn.disabled = true;
     
-    let welcomeText = "Начинаем?";
+    let welcomeText = "Начнём?";
     if (state.lastResult === 'win') {
-        welcomeText = "Продолжаем?";
+        if (state.streak >= 60) {
+            welcomeText = "Максимальная сложность!"; // <--- НОВОЕ СООБЩЕНИЕ
+        } else {
+            welcomeText = "Сложность повысилась!"; // <--- СТАРОЕ СООБЩЕНИЕ
+        }
     } else if (state.lastResult === 'almost') {
-        welcomeText = "Пробуем ещё?";
+        welcomeText = "Попробуем ещё?";
     } else if (state.lastResult === 'lose') {
-        welcomeText = "Начинаем сначала?";
+        welcomeText = "Начнём сначала?";
     }
 
     state.round++;
