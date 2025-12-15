@@ -709,13 +709,13 @@ function reset() {
     state.canPressSpace = false;
     elements.resultAgainBtn.disabled = true;
     
-    let welcomeText = "Начнём?";
+    let welcomeText = "Начинаем?";
     if (state.lastResult === 'win') {
-        welcomeText = "Продолжим?";
+        welcomeText = "Продолжаем?";
     } else if (state.lastResult === 'almost') {
-        welcomeText = "Ещё попытка?";
+        welcomeText = "Пробуем ещё?";
     } else if (state.lastResult === 'lose') {
-        welcomeText = "Начнём сначала?";
+        welcomeText = "Начинаем сначала?";
     }
 
     state.round++;
@@ -795,7 +795,7 @@ document.addEventListener('contextmenu', e => { e.preventDefault(); return false
 window.onload = async () => {
     // 1. Мгновенное отображение надписи "Загрузка..."
     if (elements.instruction) {
-        setInstructionText("Загрузка...", true); 
+        setInstructionText("Загрузка... 0%", true); 
     }
     
     // 2. Скрываем кнопку старта сразу при загрузке
