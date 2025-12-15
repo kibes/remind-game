@@ -2,8 +2,8 @@
 let tg = null;
 if (window.Telegram && window.Telegram.WebApp) {
     tg = window.Telegram.WebApp;
-    tg.expand(); // Раскрываем на весь экран
-    tg.enableClosingConfirmation(); // Включаем подтверждение закрытия
+    tg.expand();
+    tg.enableClosingConfirmation();
 }
 
 // Основной объект состояния игры
@@ -29,38 +29,22 @@ const state = {
     fastCycle: null,
     startBtnLock: false,
     resetBtnLock: false,
-    audioEnabled: true,
-    soundsLoaded: false,
-    audioInitialized: false,
     userInteracted: false,
-    debugMode: true,
-    // Определение браузера и платформы
+    
+    // ИСПРАВЛЕНИЕ 1: Флаг готовности кнопки для пробела
+    isButtonReady: false, 
+
+    // Определение платформы
     isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream,
-    isSafari: /^((?!chrome|android).)*safari/i.test(navigator.userAgent),
-    isChrome: /chrome|chromium|crios/i.test(navigator.userAgent),
-    isFirefox: /firefox|fxios/i.test(navigator.userAgent),
-    isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
-    isMac: /Macintosh|MacIntel|MacPPC|Mac68K/.test(navigator.userAgent),
     isTelegramWebApp: window.Telegram && window.Telegram.WebApp,
-    // Флаги для аудио
-    audioUnlocked: false,
-    // ИСПРАВЛЕНИЕ: Надежная система звуков
-    soundInstances: {},
-    currentSoundIndex: {},
-    soundPlayTimes: {},
-    // Флаги для обработки касаний
-    touchStartedOnButton: false,
-    currentTouchButton: null,
-    // Флаг загрузки изображений
-    imagesLoaded: false,
-    // ИСПРАВЛЕНИЕ: Флаг для отслеживания нажатия пробела до появления кнопки
-    gameStartedBeforeButtonAppeared: false,
-    changeSoundPlayed: false,
-    startSoundPlayed: false,
-    resultScreenVisible: false,
-    canPressSpace: true,
-    // Флаг видимости кнопки старта
-    startBtnVisible: false
+
+    // ИСПРАВЛЕНИЕ 3: Новая система аудио (Web Audio API)
+    audioContext: null,
+    audioBuffers: {},
+    soundsLoaded: false,
+    audioUnlocked: false, // Флаг разблокировки контекста на iOS
+    
+    imagesLoaded: false
 };
 
 // Ссылки на DOM элементы
@@ -82,18 +66,14 @@ const elements = {
     resultPlayer: document.getElementById('result-player')
 };
 
-// ИСПРАВЛЕНИЕ: Функция для плавной смены текста в instruction
 function setInstructionText(text, immediate = false) {
     const instruction = elements.instruction;
-    
     if (immediate) {
         instruction.textContent = text;
         instruction.classList.add('show');
         return;
     }
-    
     instruction.classList.remove('show');
-    
     setTimeout(() => {
         instruction.textContent = text;
         setTimeout(() => {
@@ -103,481 +83,164 @@ function setInstructionText(text, immediate = false) {
 }
 
 // ============================
-// НАДЕЖНАЯ СИСТЕМА ЗВУКОВ
+// НОВАЯ СИСТЕМА ЗВУКОВ (WEB AUDIO API)
 // ============================
+// Решает проблемы с задержками и пропажей звуков на iOS
 
-// ИСПРАВЛЕНИЕ: Инициализация звуков с улучшенной логикой
+const AudioContext = window.AudioContext || window.webkitAudioContext;
+
 function initAudioSystem() {
-    console.log('Инициализация системы звуков...');
-    console.log('Telegram Web App:', state.isTelegramWebApp ? 'Да' : 'Нет');
-    
-    // Дополнительный preload для iOS
-    if (state.isIOS) {
-        console.log('iOS обнаружен - дополнительная предзагрузка звуков');
-        
-        const iosPreloadSounds = [
-            'sounds/choose.mp3',
-            'sounds/repeat.mp3',
-            'sounds/result.mp3',
-            'sounds/timer.mp3'
-        ];
-        
-        iosPreloadSounds.forEach(src => {
-            const audio = new Audio();
-            audio.src = src;
-            audio.volume = 0.001; // Почти тихо
-            audio.setAttribute('playsinline', '');
-            audio.setAttribute('webkit-playsinline', '');
-            audio.preload = 'auto';
-            audio.load();
-            
-            // Пробуем воспроизвести и сразу пауза
-            setTimeout(() => {
-                audio.play().then(() => {
-                    audio.pause();
-                    audio.currentTime = 0;
-                }).catch(() => {});
-            }, 100);
-        });
+    try {
+        state.audioContext = new AudioContext();
+        console.log('AudioContext создан');
+        loadAllSounds();
+    } catch (e) {
+        console.error('Web Audio API не поддерживается:', e);
     }
-    
-    // Звуки которые нам нужны
-    const soundFiles = [
-        { name: 'start', src: 'sounds/start.mp3', instances: 2 },
-        { name: 'choose', src: 'sounds/choose.mp3', instances: 6 }, // Много экземпляров для частого использования
-        { name: 'repeat', src: 'sounds/repeat.mp3', instances: 2 },
-        { name: 'timer', src: 'sounds/timer.mp3', instances: 10 }, // Очень много для таймера
-        { name: 'change', src: 'sounds/result.mp3', instances: 3 },
-        { name: 'victory', src: 'sounds/victory.mp3', instances: 2 },
-        { name: 'vic', src: 'sounds/vic.mp3', instances: 2 },
-        { name: 'loss', src: 'sounds/loss.mp3', instances: 2 }
-    ];
-    
-    // Инициализируем экземпляры для каждого звука
-    soundFiles.forEach(({ name, src, instances }) => {
-        state.soundInstances[name] = [];
-        state.currentSoundIndex[name] = 0;
-        state.soundPlayTimes[name] = 0;
-        
-        // Создаем несколько экземпляров
-        for (let i = 0; i < instances; i++) {
-            const audio = new Audio();
-            audio.src = src;
-            audio.preload = 'auto';
-            audio.volume = 1.0;
-            
-            // Критически важные атрибуты
-            audio.setAttribute('playsinline', '');
-            audio.setAttribute('webkit-playsinline', '');
-            audio.playsInline = true;
-            audio.webkitPlaysInline = true;
-            
-            if (state.isTelegramWebApp) {
-                audio.setAttribute('muted', 'false');
-                audio.muted = false;
-            }
-            
-            // Предзагружаем
-            audio.load();
-            
-            state.soundInstances[name].push({
-                audio: audio,
-                isPlaying: false,
-                index: i,
-                lastPlayTime: 0
-            });
-        }
-        
-        console.log(`✓ ${name}: ${instances} экземпляров создано`);
-    });
-    
-    state.soundsLoaded = true;
-    console.log('✓ Система звуков инициализирована');
-    
-    // Специальная разблокировка для Web App
-    unlockAudioForWebApp();
 }
 
-// ИСПРАВЛЕНИЕ: Улучшенная разблокировка аудио
-function unlockAudioForWebApp() {
-    console.log('Разблокировка аудио...');
-    
-    // Для Web App пробуем воспроизвести тихий звук сразу
-    if (state.isTelegramWebApp || state.isIOS || state.isSafari) {
-        setTimeout(() => {
-            try {
-                const testAudio = new Audio();
-                testAudio.src = 'sounds/timer.mp3';
-                testAudio.volume = 0.001;
-                testAudio.setAttribute('playsinline', '');
-                testAudio.setAttribute('webkit-playsinline', '');
-                
-                if (state.isTelegramWebApp) {
-                    testAudio.setAttribute('muted', 'false');
-                    testAudio.muted = false;
-                }
-                
-                testAudio.play().then(() => {
-                    testAudio.pause();
-                    testAudio.currentTime = 0;
-                    console.log('✓ Аудио разблокировано');
-                }).catch(e => {
-                    console.log('Аудио разблокировано (с ошибкой):', e.message);
-                });
-            } catch (e) {
-                console.warn('Ошибка разблокировки аудио:', e);
-            }
-        }, 500);
+async function loadSoundFile(name, url) {
+    try {
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+        state.audioBuffers[name] = audioBuffer;
+        console.log(`✓ Звук загружен: ${name}`);
+    } catch (e) {
+        console.error(`Ошибка загрузки звука ${name}:`, e);
     }
-    
-    state.audioUnlocked = true;
-    state.audioInitialized = true;
-    
-    // Разблокировка при взаимодействии
-    const unlockOnInteraction = () => {
-        if (!state.userInteracted) {
-            state.userInteracted = true;
-            console.log('Пользователь взаимодействовал');
-        }
+}
+
+async function loadAllSounds() {
+    const sounds = {
+        'start': 'sounds/start.mp3',
+        'choose': 'sounds/choose.mp3',
+        'repeat': 'sounds/repeat.mp3',
+        'timer': 'sounds/timer.mp3',
+        'change': 'sounds/result.mp3', // Проверьте, верно ли название файла в папке
+        'victory': 'sounds/victory.mp3',
+        'vic': 'sounds/vic.mp3',
+        'loss': 'sounds/loss.mp3'
     };
-    
-    document.addEventListener('click', unlockOnInteraction, { once: true });
-    document.addEventListener('touchstart', unlockOnInteraction, { once: true });
+
+    const promises = Object.entries(sounds).map(([name, url]) => loadSoundFile(name, url));
+    await Promise.all(promises);
+    state.soundsLoaded = true;
+    console.log('✓ Все звуки загружены в память');
 }
 
-// ИСПРАВЛЕНИЕ: Улучшенная функция воспроизведения звука
-function playSound(soundName) {
-    if (!state.soundsLoaded || !state.audioInitialized) {
-        console.log(`Аудио не готово для ${soundName}`);
-        return false;
-    }
+// Функция разблокировки аудио (критично для iOS)
+function unlockAudio() {
+    if (!state.audioContext || state.audioUnlocked) return;
+
+    // Создаем и проигрываем тишину
+    const buffer = state.audioContext.createBuffer(1, 1, 22050);
+    const source = state.audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(state.audioContext.destination);
     
-    const instances = state.soundInstances[soundName];
-    if (!instances || instances.length === 0) {
-        console.warn(`Нет экземпляров для звука ${soundName}`);
-        return false;
-    }
-    
-    const now = Date.now();
-    
-    // Проверяем, не воспроизводился ли этот звук недавно
-    const lastGlobalPlay = state.soundPlayTimes[soundName] || 0;
-    if (now - lastGlobalPlay < 50) { // 50ms минимальная задержка
-        console.log(`Звук ${soundName} воспроизводился недавно, пропускаем`);
-        return false;
-    }
-    
-    // Ищем доступный экземпляр
-    let availableInstance = null;
-    let oldestInstance = instances[0];
-    
-    for (const instance of instances) {
-        if (!instance.isPlaying && (now - instance.lastPlayTime > 100)) {
-            availableInstance = instance;
-            break;
-        }
-        if (instance.lastPlayTime < oldestInstance.lastPlayTime) {
-            oldestInstance = instance;
-        }
-    }
-    
-    // Если нет доступного, берем самый старый
-    if (!availableInstance) {
-        availableInstance = oldestInstance;
-    }
-    
-    // Проверяем, не воспроизводился ли этот экземпляр недавно
-    if (now - availableInstance.lastPlayTime < 50) {
-        console.log(`Экземпляр ${soundName}-${availableInstance.index} воспроизводился недавно`);
-        return false;
-    }
-    
-    console.log(`Воспроизведение ${soundName} (экземпляр ${availableInstance.index})`);
-    
-    try {
-        // ВСЕГДА сбрасываем время
-        availableInstance.audio.currentTime = 0;
-        availableInstance.isPlaying = true;
-        availableInstance.lastPlayTime = now;
-        state.soundPlayTimes[soundName] = now;
-        
-        // Для Web App ВСЕГДА устанавливаем атрибуты
-        if (state.isTelegramWebApp) {
-            availableInstance.audio.setAttribute('playsinline', '');
-            availableInstance.audio.setAttribute('webkit-playsinline', '');
-            availableInstance.audio.setAttribute('muted', 'false');
-            availableInstance.audio.muted = false;
-        }
-        
-        // Пробуем воспроизвести
-        availableInstance.audio.play().then(() => {
-            console.log(`✓ ${soundName} успешно воспроизведен`);
-            
-            // Сбрасываем флаг через время
-            setTimeout(() => {
-                availableInstance.isPlaying = false;
-            }, 500);
-            
-        }).catch(error => {
-            console.warn(`✗ ${soundName} ошибка: ${error.name}`);
-            availableInstance.isPlaying = false;
-            
-            // Для Web App: пробуем еще раз через 100мс
-            if (state.isTelegramWebApp) {
-                setTimeout(() => {
-                    playSound(soundName);
-                }, 100);
-            }
+    if (source.start) source.start(0);
+    else if (source.noteOn) source.noteOn(0);
+
+    // Возобновляем контекст
+    if (state.audioContext.state === 'suspended') {
+        state.audioContext.resume().then(() => {
+            state.audioUnlocked = true;
+            console.log('AudioContext разблокирован (resume)');
         });
-        
-        return true;
-        
-    } catch (error) {
-        console.warn(`Исключение для ${soundName}:`, error);
-        availableInstance.isPlaying = false;
-        return false;
+    } else {
+        state.audioUnlocked = true;
+        console.log('AudioContext разблокирован');
     }
 }
 
-// ИСПРАВЛЕНИЕ: Функция для надежного воспроизведения на iOS
-function playIOSSound(soundName) {
-    if (!state.soundsLoaded || !state.audioInitialized) {
-        return false;
+function playSound(name) {
+    if (!state.soundsLoaded || !state.audioContext || !state.audioBuffers[name]) return;
+
+    // Для iOS пытаемся возобновить контекст если он "уснул"
+    if (state.audioContext.state === 'suspended') {
+        state.audioContext.resume();
     }
+
+    const source = state.audioContext.createBufferSource();
+    source.buffer = state.audioBuffers[name];
+    source.connect(state.audioContext.destination);
     
-    // Особый случай для iOS - всегда использовать новый Audio объект для CHOOSE, REPEAT, CHANGE (RESULT)
-    if (state.isIOS) {
-        const soundMap = {
-            'result': 'sounds/result.mp3',
-            'repeat': 'sounds/repeat.mp3',
-            'choose': 'sounds/choose.mp3',
-            'change': 'sounds/result.mp3'
-        };
-        
-        if (soundMap[soundName]) {
-            try {
-                const audio = new Audio();
-                audio.src = soundMap[soundName];
-                
-                audio.volume = 1.0;
-                audio.setAttribute('playsinline', '');
-                audio.setAttribute('webkit-playsinline', '');
-                audio.playsInline = true;
-                audio.webkitPlaysInline = true;
-                audio.preload = 'auto';
-                
-                // На iOS сначала нужно загрузить
-                audio.load();
-                
-                const playPromise = audio.play();
-                
-                if (playPromise !== undefined) {
-                    playPromise.then(() => {
-                        console.log(`✓ iOS: ${soundName} воспроизведен`);
-                    }).catch(e => {
-                        console.warn(`✗ iOS: ${soundName} ошибка`, e);
-                        // Fallback на обычный метод, если новый объект не сработал
-                        return playSound(soundName); 
-                    });
-                }
-                
-                return true;
-            } catch (e) {
-                console.warn(`Исключение iOS для ${soundName}:`, e);
-                return playSound(soundName); // fallback
-            }
-        }
-    }
-    
-    // Для других платформ или для других звуков используем обычный метод
-    return playSound(soundName);
+    // Запуск звука без задержки
+    source.start(0);
 }
 
-// ИСПРАВЛЕНИЕ: Улучшенная функция playTimerSound
-function playTimerSound(number) {
-    if (number < 0) return;
-    
-    // Для таймера используем специальный подход
-    if (!state.soundsLoaded || !state.audioInitialized) {
-        return;
-    }
-    
-    const soundName = 'timer';
-    const instances = state.soundInstances[soundName];
-    if (!instances || instances.length === 0) {
-        return;
-    }
-    
-    const now = Date.now();
-    
-    // Ищем самый старый экземпляр, который не играет или играл давно
-    let oldestInstance = instances[0];
-    for (const instance of instances) {
-        // Ищем неиграющий экземпляр, или самый старый
-        if (!instance.isPlaying) {
-             oldestInstance = instance;
-             break;
-        }
-        if (instance.lastPlayTime < oldestInstance.lastPlayTime) {
-            oldestInstance = instance;
-        }
-    }
+// Обертки для совместимости
+const playStartSound = () => playSound('start');
+const playChooseSound = () => playSound('choose');
+const playRepeatSound = () => playSound('repeat');
+const playChangeSound = () => playSound('change');
+// Таймеру теперь не нужны инстансы, WebAudio играет их "поверх" друг друга без лагов
+const playTimerSound = (num) => { if(num >= 0) playSound('timer'); }; 
 
-    // Проверяем, не воспроизводился ли этот экземпляр слишком недавно
-    if (now - oldestInstance.lastPlayTime < 50) { 
-        return;
-    }
-    
-    try {
-        // Сбрасываем время
-        oldestInstance.audio.currentTime = 0;
-        oldestInstance.isPlaying = true;
-        oldestInstance.lastPlayTime = now;
-        
-        // Web App атрибуты
-        if (state.isTelegramWebApp) {
-            oldestInstance.audio.setAttribute('playsinline', '');
-            oldestInstance.audio.setAttribute('webkit-playsinline', '');
-            oldestInstance.audio.setAttribute('muted', 'false');
-            oldestInstance.audio.muted = false;
-        }
-        
-        // Воспроизводим БЕЗ задержки
-        oldestInstance.audio.play().then(() => {
-            setTimeout(() => {
-                oldestInstance.isPlaying = false;
-            }, 300);
-        }).catch(error => {
-            console.warn(`Таймер звук ошибка: ${error.name}`);
-            oldestInstance.isPlaying = false;
-        });
-        
-    } catch (error) {
-        oldestInstance.isPlaying = false;
-    }
-}
-
-// Функции для конкретных звуков
-function playStartSound() {
-    return playSound('start');
-}
-
-function playChooseSound() {
-    return playIOSSound('choose');
-}
-
-function playRepeatSound() {
-    return playIOSSound('repeat');
-}
-
-function playChangeSound() {
-    return playIOSSound('change');
-}
-
-// Принудительная активация аудио
-function ensureAudio() {
-    if (!state.audioUnlocked) {
-        unlockAudioForWebApp();
-    }
-}
 
 // ============================
-// ОСНОВНЫЕ ФУНКЦИИ ИГРЫ
+// ЛОГИКА ИГРЫ
 // ============================
 
-// Функция для проверки загрузки всех изображений
 function checkImagesLoaded() {
     let allLoaded = true;
     let loadedCount = 0;
     let totalCount = 0;
     
-    for (const type of state.parts) {
-        totalCount += state.partCounts[type];
-    }
+    for (const type of state.parts) totalCount += state.partCounts[type];
     
     for (const type of state.parts) {
-        if (!state.loaded[type]) {
-            allLoaded = false;
-            continue;
-        }
-        
+        if (!state.loaded[type]) { allLoaded = false; continue; }
         for (const item of state.loaded[type]) {
-            if (item && item.img && item.img.complete && item.img.naturalWidth !== 0) {
-                loadedCount++;
-            } else {
-                allLoaded = false;
-            }
+            if (item && item.img && item.img.complete && item.img.naturalWidth !== 0) loadedCount++;
+            else allLoaded = false;
         }
     }
-    
-    return {
-        allLoaded: allLoaded,
-        loadedCount: loadedCount,
-        totalCount: totalCount
-    };
+    return { allLoaded, loadedCount, totalCount };
 }
 
-// Обновление UI в зависимости от загрузки
 function updateLoadingUI() {
     const loadStatus = checkImagesLoaded();
     
     if (!loadStatus.allLoaded) {
         const progressText = `Загрузка... ${loadStatus.loadedCount}/${loadStatus.totalCount}`;
         if (elements.instruction.textContent !== progressText) {
-            // Для сайта показываем текст сразу без анимации
-            if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-                elements.instruction.textContent = progressText;
-                elements.instruction.classList.add('show');
-            } else {
-                setInstructionText(progressText);
-            }
+            elements.instruction.textContent = progressText;
+            elements.instruction.classList.add('show');
         }
         
-        // ИСПРАВЛЕНИЕ: Проверяем, не началась ли уже игра через пробел
-        if (!state.gameStartedBeforeButtonAppeared) {
-            elements.startBtn.classList.add('hidden');
-            elements.startBtn.disabled = true;
-            elements.startBtn.style.pointerEvents = 'none';
-            elements.startBtn.style.opacity = '0.5';
-            state.startBtnVisible = false;
-        }
+        elements.startBtn.classList.add('hidden');
+        elements.startBtn.disabled = true;
+        // Кнопка не готова
+        state.isButtonReady = false;
         
         setTimeout(updateLoadingUI, 500);
     } else {
         state.imagesLoaded = true;
-        console.log('✓ Все изображения загружены');
         
-        // ИСПРАВЛЕНИЕ: Проверяем, не началась ли уже игра через пробел
-        if (!state.gameStartedBeforeButtonAppeared) {
-            // ВСЕГДА показываем "Начнём?" после загрузки
-            let instructionText = "Начнём?";
+        let instructionText = "Начнём?";
+        elements.instruction.textContent = instructionText;
+        elements.instruction.classList.add('show');
             
-            // Для сайта показываем текст сразу
-            if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-                elements.instruction.textContent = instructionText;
-                elements.instruction.classList.add('show');
-            } else {
-                setInstructionText(instructionText);
-            }
+        setTimeout(() => {
+            elements.startBtn.classList.remove('hidden');
+            elements.startBtn.style.opacity = '0';
+            elements.startBtn.style.transition = 'opacity 0.3s ease';
             
-            // Плавное появление кнопки
             setTimeout(() => {
-                elements.startBtn.classList.remove('hidden');
-                elements.startBtn.style.opacity = '0';
-                elements.startBtn.style.transition = 'opacity 0.3s ease';
-                state.startBtnVisible = true;
+                elements.startBtn.style.opacity = '1';
+                elements.startBtn.disabled = false;
+                elements.startBtn.style.pointerEvents = 'auto';
                 
+                // ИСПРАВЛЕНИЕ 1: Разрешаем пробел только когда кнопка полностью проявилась
                 setTimeout(() => {
-                    elements.startBtn.style.opacity = '1';
-                    elements.startBtn.disabled = false;
-                    elements.startBtn.style.pointerEvents = 'auto';
-                    
-                    setTimeout(() => {
-                        elements.startBtn.style.transition = '';
-                    }, 300);
-                }, 50);
-            }, 350);
-        }
+                    elements.startBtn.style.transition = '';
+                    state.isButtonReady = true; 
+                    console.log('Кнопка готова, можно жать пробел');
+                }, 300);
+            }, 50);
+        }, 350);
         
         if (state.gamePhase === 'idle') {
             startIdleAnimation();
@@ -585,19 +248,12 @@ function updateLoadingUI() {
     }
 }
 
-// Предзагрузка critical изображений
 function preloadCriticalImages() {
-    const criticalImages = [
-        'skins/1.png', 'heads/1.png', 'bodies/1.png', 'accessories/1.png'
-    ];
-    
-    criticalImages.forEach(src => {
-        const img = new Image();
-        img.src = src;
+    ['skins/1.png', 'heads/1.png', 'bodies/1.png', 'accessories/1.png'].forEach(src => {
+        (new Image()).src = src;
     });
 }
 
-// Функция для создания рандомного порядка элементов
 function createRandomOrder() {
     state.order = {};
     state.parts.forEach(type => {
@@ -610,48 +266,33 @@ function createRandomOrder() {
     });
 }
 
-// Получение элемента по индексу в рандомном порядке
 function getRandomOrderItem(type, index) {
-    if (!state.order[type] || !state.loaded[type]) {
-        return null;
-    }
+    if (!state.order[type] || !state.loaded[type]) return null;
     const realIndex = state.order[type][index % state.order[type].length];
     return state.loaded[type][realIndex];
 }
 
-// Загрузка всех изображений частей персонажа
 async function loadImages() {
     const folders = { skin: 'skins/', head: 'heads/', body: 'bodies/', accessory: 'accessories/' };
-    
     preloadCriticalImages();
     
     for (const type of state.parts) {
         state.loaded[type] = [];
         const loadPromises = [];
-        
         for (let i = 1; i <= state.partCounts[type]; i++) {
             const img = new Image();
             img.src = `${folders[type]}${i}.png`;
-            
             loadPromises.push(new Promise(r => { 
                 img.onload = r; 
-                img.onerror = () => { 
-                    console.warn(`Ошибка загрузки: ${folders[type]}${i}.png`);
-                    r(); 
-                };
+                img.onerror = r; 
             }));
-            
             state.loaded[type].push({ id: i, img: img });
         }
-        
         await Promise.all(loadPromises);
-        console.log(`✓ ${type} изображения загружены`);
     }
-    
     updateLoadingUI();
 }
 
-// Отрисовка персонажа в указанном контейнере
 function render(container, data) {
     const fragment = document.createDocumentFragment();
     state.parts.forEach(p => {
@@ -662,32 +303,22 @@ function render(container, data) {
             fragment.appendChild(div);
         }
     });
-    
     container.innerHTML = '';
     container.appendChild(fragment);
 }
 
-// ИСПРАВЛЕНИЕ: Надежное скрытие кнопки
-function hideStartButtonImmediately() {
-    if (!elements.startBtn) return;
-    
-    // Немедленно скрываем без анимации
-    elements.startBtn.classList.add('hidden');
-    elements.startBtn.disabled = true;
-    elements.startBtn.style.pointerEvents = 'none';
-    elements.startBtn.style.opacity = '0';
-    elements.startBtn.style.transform = '';
-    elements.startBtn.style.transition = '';
-    state.startBtnVisible = false;
-    state.gameStartedBeforeButtonAppeared = true; // Устанавливаем флаг
-}
-
-// Функции для обработки касаний
 function setupTouchHandlers() {
-    console.log('Настройка обработчиков касаний...');
-    
     const buttons = [elements.startBtn, elements.selectBtn, elements.resultAgainBtn];
     
+    // Глобальный слушатель для разблокировки аудио при первом тапе
+    const globalUnlock = () => {
+        unlockAudio();
+        document.removeEventListener('touchstart', globalUnlock);
+        document.removeEventListener('click', globalUnlock);
+    };
+    document.addEventListener('touchstart', globalUnlock, { passive: true });
+    document.addEventListener('click', globalUnlock, { passive: true });
+
     buttons.forEach(button => {
         if (!button) return;
         
@@ -695,79 +326,60 @@ function setupTouchHandlers() {
             state.touchStartedOnButton = true;
             state.currentTouchButton = this;
             this.style.transform = 'scale(0.97)';
-            e.preventDefault();
-        }, { passive: false });
-        
-        button.addEventListener('touchmove', function(e) {
-            if (!state.touchStartedOnButton) return;
-            
-            const touch = e.touches[0];
-            const rect = this.getBoundingClientRect();
-            const isStillOnButton = (
-                touch.clientX >= rect.left &&
-                touch.clientX <= rect.right &&
-                touch.clientY >= rect.top &&
-                touch.clientY <= rect.bottom
-            );
-            
-            if (!isStillOnButton) {
-                state.touchStartedOnButton = false;
-                this.style.transform = '';
-            }
+            // Важно для iOS аудио: действие пользователя
+            unlockAudio(); 
         }, { passive: true });
         
         button.addEventListener('touchend', function(e) {
             if (state.touchStartedOnButton && state.currentTouchButton === this) {
                 this.style.transform = '';
+                e.preventDefault(); // Предотвращаем двойной клик
                 
-                if (this === elements.startBtn) {
-                    handleStartButton();
-                } else if (this === elements.selectBtn) {
-                    handleSelectButton();
-                } else if (this === elements.resultAgainBtn) {
-                    handleResetButton();
-                }
+                if (this === elements.startBtn) handleStartButton();
+                else if (this === elements.selectBtn) handleSelectButton();
+                else if (this === elements.resultAgainBtn) handleResetButton();
             }
-            
             state.touchStartedOnButton = false;
             state.currentTouchButton = null;
-            this.style.transform = '';
-            e.preventDefault();
         }, { passive: false });
         
         button.addEventListener('touchcancel', function() {
             state.touchStartedOnButton = false;
-            state.currentTouchButton = null;
             this.style.transform = '';
         }, { passive: true });
     });
     
-    elements.startBtn.addEventListener('click', handleStartButton);
-    elements.selectBtn.addEventListener('click', handleSelectButton);
-    elements.resultAgainBtn.addEventListener('click', handleResetButton);
+    // Click fallback
+    elements.startBtn.addEventListener('click', (e) => { 
+        if(e.detail === 0) return; // Игнорируем программные клики от touch
+        handleStartButton(); 
+    });
+    elements.selectBtn.addEventListener('click', (e) => { 
+        if(e.detail === 0) return;
+        handleSelectButton(); 
+    });
+    elements.resultAgainBtn.addEventListener('click', (e) => { 
+        if(e.detail === 0) return;
+        handleResetButton(); 
+    });
 }
 
-// Обработчики для кнопок
 function handleStartButton() {
     if (state.startBtnLock) return;
-    
-    ensureAudio();
-    // ИСПРАВЛЕНИЕ 1: Скрываем кнопку перед началом игры
-    hideStartButtonImmediately();
+    unlockAudio();
     startGame();
 }
 
 function handleSelectButton() {
-    ensureAudio();
+    unlockAudio();
     select();
 }
 
 function handleResetButton() {
-    ensureAudio();
+    unlockAudio();
     reset();
 }
 
-// Запуск анимации в режиме ожидания
 function startIdle() {
     state.gamePhase = 'idle';
     state.startBtnLock = false;
@@ -775,12 +387,6 @@ function startIdle() {
     state.canPressSpace = true;
     state.resultScreenVisible = false;
     state.changeSoundPlayed = false;
-    state.startSoundPlayed = false;
-    
-    // ИСПРАВЛЕНИЕ 2: Устанавливаем текст "Начнём?" сразу при первом входе
-    if (state.lastResult === null && state.imagesLoaded) {
-        setInstructionText("Начнём?", true);
-    }
     
     createRandomOrder();
     
@@ -788,39 +394,18 @@ function startIdle() {
         updateLoadingUI();
         return;
     }
-    
     startIdleAnimation();
 }
 
-// Отдельная функция для анимации idle
 function startIdleAnimation() {
-    // Определяем текст в зависимости от lastResult
-    let instructionText;
-    let immediateText = false;
-    if (state.lastResult === null) {
-        instructionText = "Начнём?";
-        immediateText = true; // ИСПРАВЛЕНИЕ 2: Сразу при первом запуске
-    } else if (state.lastResult === 'win') {
-        instructionText = "Сложность повысилась!";
-    } else if (state.lastResult === 'almost') {
-        instructionText = "Сейчас получится!";
-    } else {
-        instructionText = "Начнём сначала?";
-    }
-    
-    // Для сайта показываем сразу
-    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-        elements.instruction.textContent = instructionText;
-        elements.instruction.classList.add('show');
-    } else {
-        setInstructionText(instructionText, immediateText);
-    }
+    // Текст устанавливается либо при загрузке, либо при сбросе
+    // Здесь мы просто убеждаемся, что он показан
+    elements.instruction.classList.add('show');
     
     state.parts.forEach(p => {
         const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
         state.idleCharacter[p] = getRandomOrderItem(p, randomIndex);
     });
-    
     render(elements.characterDisplay, state.idleCharacter);
     
     let lastTime = 0;
@@ -841,20 +426,15 @@ function startIdleAnimation() {
                 render(elements.characterDisplay, state.idleCharacter);
             }
         }
-        
         if (state.gamePhase === 'idle') {
             requestAnimationFrame(animateIdle);
         }
     };
     
-    if (state.idleInterval) {
-        cancelAnimationFrame(state.idleInterval);
-    }
-    
+    if (state.idleInterval) cancelAnimationFrame(state.idleInterval);
     state.idleInterval = requestAnimationFrame(animateIdle);
 }
 
-// Остановка анимации в режиме ожидания
 function stopIdle() { 
     if (state.idleInterval) {
         cancelAnimationFrame(state.idleInterval);
@@ -862,20 +442,30 @@ function stopIdle() {
     }
 }
 
-// Функция для анимации смены цифр таймера
+function hideButtonWithAnimation(button) {
+    if (!button || button.classList.contains('hidden')) return;
+    
+    button.style.transition = 'all 0.2s ease';
+    button.style.opacity = '0';
+    button.style.transform = 'scale(0.8)';
+    setTimeout(() => {
+        button.classList.add('hidden');
+        button.style.transition = '';
+        button.style.opacity = '';
+        button.style.transform = '';
+    }, 200);
+}
+
 function animateTimerChange(timerNumber) {
     const timer = elements.timer;
-    
-    // ИСПРАВЛЕНИЕ 3: Звук таймера всегда должен играть при смене цифры
-    playTimerSound(timerNumber); 
-    
-    // Проверяем, есть ли содержимое
     if (timer.textContent && timer.textContent.trim()) {
         const digitSpan = document.createElement('span');
         digitSpan.className = 'timer-digit changing';
         digitSpan.textContent = timer.textContent;
         timer.innerHTML = '';
         timer.appendChild(digitSpan);
+        
+        playTimerSound(timerNumber);
         
         setTimeout(() => {
             if (digitSpan.parentNode === timer) {
@@ -885,15 +475,16 @@ function animateTimerChange(timerNumber) {
     }
 }
 
-// Начало игры
 function startGame() {
     if (state.startBtnLock) return;
     
-    // Скрываем кнопку ПЕРЕД началом игры (на всякий случай)
-    // ИСПРАВЛЕНИЕ 1: Вызывается в handleStartButton и keydown
-    // hideStartButtonImmediately(); 
-    
     state.startBtnLock = true;
+    state.isButtonReady = false; // Блокируем пробел
+    
+    if (elements.startBtn && !elements.startBtn.classList.contains('hidden')) {
+        hideButtonWithAnimation(elements.startBtn);
+    }
+    
     state.isBusy = true;
     state.gamePhase = 'creating';
     state.changeSoundPlayed = false;
@@ -902,12 +493,12 @@ function startGame() {
     stopIdle();
     setInstructionText("Создаём персонажа...");
     
-    let duration = 0;
     if (state.fastCycle) {
         cancelAnimationFrame(state.fastCycle);
         state.fastCycle = null;
     }
     
+    let duration = 0;
     let lastTime = 0;
     
     const animateCreation = (timestamp) => {
@@ -935,16 +526,13 @@ function startGame() {
                 return;
             }
         }
-        
         if (state.gamePhase === 'creating') {
             state.fastCycle = requestAnimationFrame(animateCreation);
         }
     };
-    
     state.fastCycle = requestAnimationFrame(animateCreation);
 }
 
-// Функция для определения времени на запоминание
 function getMemorizeTime() {
     if (state.streak >= 50) return 1;
     else if (state.streak >= 30) return 2;
@@ -953,50 +541,38 @@ function getMemorizeTime() {
     else return 5;
 }
 
-// Фиксация целевого персонажа
 function finalizeTarget() {
     state.gamePhase = 'memorizing';
-    
     state.parts.forEach(p => {
         const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
         state.target[p] = getRandomOrderItem(p, randomIndex);
     });
-    
     render(elements.characterDisplay, state.target);
     
     setTimeout(() => {
         setInstructionText("Запомни персонажа");
-        
         let timeLeft = getMemorizeTime();
         elements.timer.textContent = timeLeft;
         elements.timer.classList.add('show');
         state.isTimerActive = true;
         
-        setTimeout(() => {
-            // ИСПРАВЛЕНИЕ 3: Вызываем animateTimerChange для первого звука
-            animateTimerChange(timeLeft); 
-        }, 100);
+        setTimeout(() => animateTimerChange(timeLeft), 100);
         
         const t = setInterval(() => {
             timeLeft--;
-            
             if (timeLeft < 0) {
                 clearInterval(t);
                 elements.timer.classList.remove('show');
                 state.isTimerActive = false;
-                setTimeout(() => {
-                    startSelecting();
-                }, 300);
+                setTimeout(startSelecting, 300);
                 return;
             }
-            
             elements.timer.textContent = timeLeft;
             animateTimerChange(timeLeft);
         }, 1000);
     }, 500);
 }
 
-// Начало фазы выбора
 function startSelecting() {
     state.gamePhase = 'selecting';
     state.currentPart = 0;
@@ -1005,13 +581,9 @@ function startSelecting() {
     state.isBusy = false;
     state.canPressSpace = false;
 
-    // Сразу устанавливаем первую деталь
     const firstType = state.parts[0];
     state.selection[firstType] = getRandomOrderItem(firstType, 0);
-    
-    // Сразу показываем первую деталь
     render(elements.characterDisplay, state.selection);
-    
     setInstructionText(`Выбери ${getLabel(firstType)}`);
     
     setTimeout(() => {
@@ -1021,108 +593,60 @@ function startSelecting() {
     }, 400);
 }
 
-// Цикл выбора текущей части персонажа
 function nextCycle() {
     if (state.currentPart >= state.parts.length) { finish(); return; }
     
     const type = state.parts[state.currentPart];
-    
     let baseSpeed = 1200 - (state.currentPart * 200);
     let finalSpeed = state.streak > 0 ? baseSpeed * Math.pow(0.95, state.streak) : baseSpeed;
     finalSpeed = Math.max(finalSpeed, 200);
     
     let idx = 0;
-    
-    if (state.interval) {
-        clearInterval(state.interval);
-        state.interval = null;
-    }
+    if (state.interval) clearInterval(state.interval);
     
     const cycle = () => {
         idx = (idx + 1) % state.partCounts[type];
         state.selection[type] = getRandomOrderItem(type, idx);
         render(elements.characterDisplay, state.selection);
     };
-    
-    // ИСПРАВЛЕНИЕ: Запускаем интервал, не делаем сразу цикл
     state.interval = setInterval(cycle, finalSpeed);
-    
-    setTimeout(() => {
-        state.canPressSpace = true;
-    }, 200);
+    setTimeout(() => { state.canPressSpace = true; }, 200);
 }
 
-// Получение читаемого названия части персонажа
 function getLabel(t) { 
-    return {
-        skin:'цвет кожи', 
-        head:'голову', 
-        body:'тело', 
-        accessory:'аксессуар'
-    }[t]; 
+    return {skin:'цвет кожи', head:'голову', body:'тело', accessory:'аксессуар'}[t]; 
 }
 
-// Обработка выбора игрока
 function select() {
-    if (!state.canSelect || state.gamePhase !== 'selecting') {
-        return false;
-    }
+    if (!state.canSelect || state.gamePhase !== 'selecting') return false;
     
-    // ИСПРАВЛЕНИЕ 4: playChooseSound вызывает playIOSSound
     playChooseSound();
-    
     state.canSelect = false;
     state.canPressSpace = false;
     
-    if (state.interval) {
-        clearInterval(state.interval);
-        state.interval = null;
-    }
-    
+    if (state.interval) { clearInterval(state.interval); state.interval = null; }
     state.currentPart++;
     
     if (state.currentPart >= state.parts.length) {
-        // Скрываем кнопку выбора
-        elements.selectBtn.classList.remove('show');
-        elements.selectBtn.classList.add('hidden');
-        elements.selectBtn.style.opacity = '';
-        elements.selectBtn.style.transform = '';
-        
-        setTimeout(() => {
-            state.canSelect = true;
-            finish();
-        }, 200);
+        hideButtonWithAnimation(elements.selectBtn);
+        setTimeout(() => { state.canSelect = true; finish(); }, 200);
     } else {
-        // Устанавливаем следующую деталь
         const nextType = state.parts[state.currentPart];
         state.selection[nextType] = getRandomOrderItem(nextType, 0);
-        
-        // Сразу показываем персонажа с новой деталью
         render(elements.characterDisplay, state.selection);
-        
         setInstructionText(`Выбери ${getLabel(nextType)}`);
-        
-        setTimeout(() => { 
-            state.canSelect = true;
-            nextCycle(); 
-        }, 150);
+        setTimeout(() => { state.canSelect = true; nextCycle(); }, 150);
     }
-    
     return true;
 }
 
-// Завершение игры
 function finish() {
     state.gamePhase = 'finished';
     state.isBusy = true;
     state.canPressSpace = false;
     state.resultScreenVisible = false;
     
-    if (state.interval) {
-        clearInterval(state.interval);
-        state.interval = null;
-    }
-    
+    if (state.interval) { clearInterval(state.interval); state.interval = null; }
     elements.gameArea.classList.add('hidden');
     
     setTimeout(() => {
@@ -1133,18 +657,14 @@ function finish() {
         const p = Math.round((m/4)*100);
         
         if (p === 100) {
-            state.streak++; 
-            state.lastResult = 'win';
+            state.streak++; state.lastResult = 'win';
         } else if (p < 75) {
-            state.streak = 0; 
-            state.lastResult = 'lose';
+            state.streak = 0; state.lastResult = 'lose';
         } else {
             state.lastResult = 'almost';
         }
         
-        if (state.streak > state.maxStreak) {
-            state.maxStreak = state.streak;
-        }
+        if (state.streak > state.maxStreak) state.maxStreak = state.streak;
         
         elements.resultPercent.textContent = p + '%';
         elements.resultText.textContent = p === 100 ? "Идеально! 🎉" : (p >= 75 ? "Почти! 🤏🏻" : "Попробуй еще раз...");
@@ -1155,7 +675,6 @@ function finish() {
         elements.resultScreen.style.display = 'flex';
         setTimeout(() => {
             elements.resultScreen.classList.add('show');
-            
             setTimeout(() => {
                 state.resultScreenVisible = true;
                 state.canPressSpace = true;
@@ -1166,53 +685,39 @@ function finish() {
         state.resetBtnLock = false;
         state.isBusy = false;
         
-        // Воспроизводим звуки результатов
-        if (p === 100) {
-            playSound('victory');
-        } else if (p >= 75) {
-            playSound('vic');
-        } else {
-            playSound('loss');
-        }
+        if (p === 100) playSound('victory');
+        else if (p >= 75) playSound('vic');
+        else playSound('loss');
         
         if (tg && tg.sendData) {
-            const gameData = {
+            tg.sendData(JSON.stringify({
                 round: state.round,
                 streak: state.streak,
                 maxStreak: state.maxStreak,
                 lastResult: p
-            };
-            tg.sendData(JSON.stringify(gameData));
+            }));
         }
     }, 400);
 }
 
-// Сброс игры
 function reset() {
     if (state.resetBtnLock || state.isBusy) return;
     
-    // ИСПРАВЛЕНИЕ 4: playRepeatSound вызывает playIOSSound
     playRepeatSound();
     
     state.resetBtnLock = true;
     state.canPressSpace = false;
-    
-    // ИСПРАВЛЕНИЕ 2: Сразу меняем текст на "Начнём?"
-    setInstructionText("Начнём?", true); // immediate = true
-    
-    // Сбрасываем результат ПЕРЕД переходом
-    state.lastResult = null;
-    
     elements.resultAgainBtn.disabled = true;
-    elements.resultAgainBtn.style.pointerEvents = 'none';
-    elements.resultAgainBtn.style.cursor = 'not-allowed';
-    elements.resultAgainBtn.style.opacity = '0.7';
     
     state.round++;
-    elements.resultScreen.classList.remove('show');
     
-    // Сбрасываем флаг начала игры
-    state.gameStartedBeforeButtonAppeared = false;
+    // ИСПРАВЛЕНИЕ 2: Меняем текст СРАЗУ, до анимации исчезновения
+    elements.instruction.textContent = "Начнём?";
+    elements.instruction.classList.remove('show');
+    // Сбрасываем lastResult, чтобы startIdleAnimation не перезаписал текст
+    state.lastResult = null; 
+    
+    elements.resultScreen.classList.remove('show');
     
     state.target = {};
     state.selection = {};
@@ -1223,33 +728,25 @@ function reset() {
         elements.resultTarget.innerHTML = '';
         elements.resultPlayer.innerHTML = '';
         
-        // Восстанавливаем кнопку
         elements.startBtn.classList.remove('hidden');
         elements.startBtn.style.opacity = '1';
         elements.startBtn.style.transform = 'scale(1)';
         elements.startBtn.disabled = false;
         elements.startBtn.style.pointerEvents = 'auto';
-        elements.startBtn.style.cursor = 'pointer';
-        state.startBtnVisible = true;
+        
+        // Разрешаем пробел только после появления кнопки (таймаут такой же как при загрузке)
+        state.isButtonReady = false;
+        setTimeout(() => {
+            state.isButtonReady = true;
+        }, 300);
         
         elements.resultAgainBtn.disabled = false;
-        elements.resultAgainBtn.style.pointerEvents = 'auto';
-        elements.resultAgainBtn.style.cursor = 'pointer';
-        elements.resultAgainBtn.style.opacity = '1';
         
         elements.selectBtn.classList.remove('show');
         elements.selectBtn.classList.add('hidden');
-        elements.selectBtn.style.opacity = '';
-        elements.selectBtn.style.transform = '';
         
         elements.gameArea.classList.remove('hidden');
         updateStats();
-        
-        // ИСПРАВЛЕНИЕ 2: Убедимся что текст установлен - уже сделано в начале reset
-        // if (elements.instruction.textContent !== "Начнём?") {
-        //     elements.instruction.textContent = "Начнём?";
-        //     elements.instruction.classList.add('show');
-        // }
         
         setTimeout(() => {
             startIdle();
@@ -1257,7 +754,6 @@ function reset() {
     }, 400);
 }
 
-// Обновление статистики
 function updateStats() {
     const anim = (el, val) => {
         if (el.textContent != val) {
@@ -1273,32 +769,22 @@ function updateStats() {
     anim(elements.maxStreak, state.maxStreak);
 }
 
-// Обработка нажатия пробела
 window.addEventListener('keydown', function(e) {
     if (e.code === 'Space') {
         e.preventDefault();
         
-        if (state.isTimerActive || state.isBusy || state.gamePhase === 'memorizing' || state.gamePhase === 'creating') {
-            return;
-        }
+        if (state.isTimerActive || state.isBusy || state.gamePhase === 'memorizing' || state.gamePhase === 'creating') return;
+        if (!state.canPressSpace) return;
         
-        if (!state.canPressSpace) {
-            return;
-        }
+        // ИСПРАВЛЕНИЕ 1: Блокировка пробела если кнопка не готова
+        if (state.gamePhase === 'idle' && !state.isButtonReady) return;
         
-        if (state.gamePhase === 'finished' && !state.resultScreenVisible) {
-            return;
-        }
+        if (state.gamePhase === 'finished' && !state.resultScreenVisible) return;
+        if (state.gamePhase === 'selecting' && !state.canSelect) return;
         
-        if (state.gamePhase === 'selecting' && !state.canSelect) {
-            return;
-        }
-        
-        ensureAudio();
+        unlockAudio();
         
         if (state.gamePhase === 'idle' && !state.startBtnLock) {
-            // ИСПРАВЛЕНИЕ 1: При старте через пробел СНАЧАЛА скрываем кнопку
-            hideStartButtonImmediately();
             startGame();
         } else if (state.gamePhase === 'selecting' && state.canSelect) {
             select();
@@ -1308,73 +794,28 @@ window.addEventListener('keydown', function(e) {
     }
 });
 
-// Предотвращение зума
+// Утилиты
 document.addEventListener('touchend', function(e) {
     const now = Date.now();
-    if (now - (window.lastTouchEnd || 0) < 300) {
-        e.preventDefault();
-    }
+    if (now - (window.lastTouchEnd || 0) < 300) e.preventDefault();
     window.lastTouchEnd = now;
 }, { passive: false });
 
-// Запрет выделения текста
-document.addEventListener('selectstart', function(e) {
-    e.preventDefault();
-    return false;
-});
+document.addEventListener('selectstart', e => { e.preventDefault(); return false; });
+document.addEventListener('contextmenu', e => { e.preventDefault(); return false; });
 
-// Запрет контекстного меню
-document.addEventListener('contextmenu', function(e) {
-    e.preventDefault();
-    return false;
-});
-
-// Инициализация игры
+// Инициализация
 window.onload = async () => {
-    console.log('=== ИГРА ЗАГРУЖАЕТСЯ ===');
-    console.log('Браузер:', state.isSafari ? 'Safari' : state.isChrome ? 'Chrome' : state.isFirefox ? 'Firefox' : 'Другой');
-    console.log('Платформа:', state.isIOS ? 'iOS' : state.isMac ? 'Mac' : state.isMobile ? 'Android' : 'Desktop');
-    console.log('Telegram Web App:', state.isTelegramWebApp ? 'Да' : 'Нет');
-    console.log('На сайте:', window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? 'Да' : 'Нет (локально)');
+    // Инициализация аудио (создание контекста)
+    initAudioSystem();
     
     try {
-        // Сначала показываем загрузку
-        elements.instruction.textContent = "Загрузка...";
-        elements.instruction.classList.add('show');
-        
-        // Начинаем с полностью скрытой кнопки
-        elements.startBtn.classList.add('hidden');
-        elements.startBtn.disabled = true;
-        elements.startBtn.style.opacity = '0';
-        elements.startBtn.style.pointerEvents = 'none';
-        state.startBtnVisible = false;
-        
-        // Инициализируем систему звуков ПЕРВЫМ ДЕЛОМ
-        initAudioSystem();
-        
-        // Загружаем изображения
         await loadImages();
-        console.log('✓ Изображения загружены');
-        
-        // Telegram инициализация
-        if (tg) {
-            tg.ready();
-            tg.expand();
-            console.log('✓ Telegram WebApp инициализирован');
-        }
-        
-        // Настраиваем обработчики касаний
+        if (tg) tg.ready();
         setupTouchHandlers();
-        console.log('✓ Обработчики касаний настроены');
-        
-        // Запускаем игру
         startIdle();
-        console.log('✓ Игра запущена в режиме ожидания');
-        
-        console.log('=== ИГРА УСПЕШНО ЗАГРУЖЕНА ===');
-        
     } catch (error) {
-        console.error('Ошибка загрузки игры:', error);
+        console.error('Ошибка:', error);
         updateLoadingUI();
         startIdle();
     }
