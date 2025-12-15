@@ -1,4 +1,31 @@
-/* Сброс стилей и базовые настройки */
+/* Запрет зума на iOS */
+html {
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+}
+
+/* Запрет выделения и перетаскивания */
+* {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Запрет контекстного меню */
+body {
+    -webkit-touch-callout: none;
+}
+
+/* Запрет перетаскивания изображений */
+.character-display, 
+.result-character-display,
+.character-layer {
+    -webkit-user-drag: none;
+    pointer-events: none;
+}
+
 * { 
     margin: 0; 
     padding: 0; 

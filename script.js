@@ -64,8 +64,7 @@ const elements = {
     resultPlayer: document.getElementById('result-player')
 };
 
-// ИСПРАВЛЕНИЕ TWA: Принудительная изоляция слоев
-// Это лечит баг с просвечиванием слоев при анимации прозрачности на iOS/TWA
+// ИСПРАВЛЕНИЕ TWA: Принудительная изоляция слоев (для лечения бага с просвечиванием)
 if (elements.characterDisplay) {
     elements.characterDisplay.style.isolation = 'isolate';
     elements.characterDisplay.style.webkitIsolation = 'isolate';
@@ -125,7 +124,7 @@ async function loadAllSounds() {
         'victory': 'sounds/victory.mp3',
         'vic': 'sounds/vic.mp3',
         'loss': 'sounds/loss.mp3',
-        'next': 'sounds/next.mp3' // НОВЫЙ ЗВУК
+        'next': 'sounds/next.mp3'
     };
 
     const promises = Object.entries(sounds).map(([name, url]) => loadSoundFile(name, url));
@@ -166,7 +165,7 @@ const playStartSound = () => playSound('start');
 const playChooseSound = () => playSound('choose');
 const playRepeatSound = () => playSound('repeat');
 const playChangeSound = () => playSound('change');
-const playNextSound = () => playSound('next'); // Обертка для нового звука
+const playNextSound = () => playSound('next'); 
 const playTimerSound = (num) => { if(num >= 0) playSound('timer'); }; 
 
 
@@ -191,16 +190,13 @@ function checkImagesLoaded() {
     return { allLoaded, loadedCount, totalCount };
 }
 
-// ИЗМЕНЕНИЕ: Теперь показывает процент загрузки
+// ИЗМЕНЕНИЕ: Теперь показывает процент загрузки и обеспечивает плавный переход
 function updateLoadingUI() {
     const imgStatus = checkImagesLoaded();
     const everythingLoaded = imgStatus.allLoaded && state.soundsLoaded;
     
-    // Новая логика расчета процента загрузки
-    // Общее количество единиц работы: 26 (изображений) + 1 (звуки) = 27
+    // Расчет процента загрузки (26 изображений + 1 аудиосистема = 27 единиц)
     const totalWorkloadUnits = 27; 
-    
-    // Количество загруженных единиц: загруженные изображения + 1, если звуки загружены
     const loadedSoundUnit = state.soundsLoaded ? 1 : 0; 
     const loadedWorkloadUnits = imgStatus.loadedCount + loadedSoundUnit;
     
@@ -209,11 +205,9 @@ function updateLoadingUI() {
         progressPercent = Math.round((loadedWorkloadUnits / totalWorkloadUnits) * 100);
     }
     
-    // Визуальное улучшение: если все изображения загружены, но звуки нет, показываем 99%
     if (imgStatus.allLoaded && !state.soundsLoaded) {
         progressPercent = 99;
     }
-    // Если все загружено, гарантируем 100%
     if (everythingLoaded) {
         progressPercent = 100;
     }
@@ -224,13 +218,12 @@ function updateLoadingUI() {
         const progressText = `Загрузка... ${progressPercent}%`;
         if (elements.instruction.textContent !== progressText) {
             elements.instruction.textContent = progressText;
-            elements.instruction.classList.add('show');
         }
         
         // Гарантированно скрываем кнопку
         elements.startBtn.classList.add('hidden');
         elements.startBtn.disabled = true;
-        elements.startBtn.style.opacity = '0'; // Дополнительно прячем через opacity
+        elements.startBtn.style.opacity = '0'; 
         state.isButtonReady = false;
         
         // Повторная проверка через 500мс
@@ -240,13 +233,11 @@ function updateLoadingUI() {
         if (!state.imagesLoaded) {
             state.imagesLoaded = true;
             
-            // Смена текста
-            elements.instruction.textContent = "Начнём?";
-            elements.instruction.classList.add('show');
+            // НОВОЕ: Используем setInstructionText для плавного перехода на "Начнём?"
+            setInstructionText("Начнём?"); 
             
             // Анимация появления кнопки
             elements.startBtn.classList.remove('hidden');
-            // Сначала прозрачная
             elements.startBtn.style.opacity = '0';
             
             // Плавное появление
@@ -586,7 +577,7 @@ function startSelecting() {
     render(elements.characterDisplay, state.selection);
     setInstructionText(`Выбери ${getLabel(firstType)}`);
     
-    // НОВОЕ: Звук при первом появлении атрибута
+    // Звук при первом появлении атрибута
     playNextSound();
     
     setTimeout(() => {
@@ -596,7 +587,7 @@ function startSelecting() {
     }, 400);
 }
 
-// nextCycle оставлен с проигрыванием звука при каждой прокрутке
+// nextCycle с проигрыванием звука при каждой прокрутке
 function nextCycle() {
     if (state.currentPart >= state.parts.length) { finish(); return; }
     
@@ -644,7 +635,7 @@ function select() {
         render(elements.characterDisplay, state.selection);
         setInstructionText(`Выбери ${getLabel(nextType)}`);
         
-        // НОВОЕ: Звук при появлении следующего атрибута
+        // Звук при появлении следующего атрибута
         playNextSound(); 
         
         setTimeout(() => { state.canSelect = true; nextCycle(); }, 150);
@@ -708,6 +699,7 @@ function finish() {
     }, 400);
 }
 
+// ВОЗВРАЩЕННАЯ ЛОГИКА: Динамический текст приветствия
 function reset() {
     if (state.resetBtnLock || state.isBusy) return;
     
@@ -717,8 +709,17 @@ function reset() {
     state.canPressSpace = false;
     elements.resultAgainBtn.disabled = true;
     
+    let welcomeText = "Начнём?";
+    if (state.lastResult === 'win') {
+        welcomeText = "Продолжим?";
+    } else if (state.lastResult === 'almost') {
+        welcomeText = "Ещё попытка?";
+    } else if (state.lastResult === 'lose') {
+        welcomeText = "Начнём сначала?";
+    }
+
     state.round++;
-    elements.instruction.textContent = "Начнём?";
+    elements.instruction.textContent = welcomeText; 
     elements.instruction.classList.remove('show');
     state.lastResult = null; 
     
@@ -790,8 +791,14 @@ document.addEventListener('touchend', function(e) {
 document.addEventListener('selectstart', e => { e.preventDefault(); return false; });
 document.addEventListener('contextmenu', e => { e.preventDefault(); return false; });
 
+// ИЗМЕНЕНИЕ: Мгновенное отображение "Загрузка..."
 window.onload = async () => {
-    // Скрываем кнопку старта сразу при загрузке
+    // 1. Мгновенное отображение надписи "Загрузка..."
+    if (elements.instruction) {
+        setInstructionText("Загрузка...", true); 
+    }
+    
+    // 2. Скрываем кнопку старта сразу при загрузке
     if (elements.startBtn) {
         elements.startBtn.classList.add('hidden');
         elements.startBtn.disabled = true;
@@ -805,7 +812,8 @@ window.onload = async () => {
         startIdle();
     } catch (error) {
         console.error('Ошибка:', error);
-        updateLoadingUI();
+        // В случае ошибки, запускаем процесс, чтобы он показал ошибку или прогресс
+        updateLoadingUI(); 
         startIdle();
     }
 };
