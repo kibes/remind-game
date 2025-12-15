@@ -42,11 +42,31 @@ const state = {
     isTelegram: !!window.Telegram?.WebApp,
     lastSoundTime: 0,
     soundCooldown: 0,
-    // Новые поля для управления звуками
     nextSoundCooldown: 0,
     lastTimerSound: 0,
-    timerPlaybackRate: 1.0, // Текущая скорость воспроизведения таймера
-    activeTimerSounds: new Set() // Активные звуки таймера
+    timerPlaybackRate: 1.0,
+    activeTimerSounds: new Set(),
+    // Новые поля для оптимизации мобильных
+    soundInstanceCounter: {},
+    maxSoundInstances: {
+        start: 2,
+        choose: 2,
+        repeat: 2,
+        timer: 3,
+        change: 4,
+        next: 8,
+        result: 2,
+        victory: 2,
+        vic: 2,
+        loss: 2
+    },
+    soundThrottle: new Map(),
+    audioInitialized: false,
+    creationStartTime: 0,
+    creationDuration: 0,
+    creationFrameCount: 0,
+    lastFrameTime: 0,
+    lastSpacePress: 0
 };
 
 // Ссылки на DOM элементы
@@ -91,11 +111,10 @@ const importantSounds = ['start', 'choose', 'repeat', 'timer', 'result', 'victor
 // Частые звуки (могут быть ограничены)
 const frequentSounds = ['change', 'next'];
 
-// Функция для создания аудио элемента
+// Функция для создания аудио элемента с оптимизацией для мобильных
 function createAudioElement(src) {
     const audioElement = new Audio();
     
-    // В Telegram Web App не используем crossOrigin
     audioElement.preload = 'auto';
     audioElement.src = src;
     
@@ -105,12 +124,12 @@ function createAudioElement(src) {
     return audioElement;
 }
 
-// Функция для предзагрузки всех звуков (оптимизированная для Telegram)
+// Оптимизированная предзагрузка звуков
 async function preloadAllSounds() {
     if (state.loadingSounds || state.soundsLoaded) return;
     
     state.loadingSounds = true;
-    console.log("Начинаем предзагрузку звуков для Telegram Web App...");
+    console.log("Начинаем предзагрузку звуков...");
     
     // Создаем экземпляры звуков
     for (const soundName in soundFiles) {
@@ -156,11 +175,10 @@ async function preloadAllSounds() {
     
     state.soundsLoaded = true;
     state.loadingSounds = false;
-    console.log("Все звуки предзагружены для Telegram Web App");
+    console.log("Все звуки предзагружены");
     
-    // В Telegram Web App сразу пробуем разблокировать аудио
-    if (state.isTelegram && !state.audioUnlocked) {
-        console.log("Telegram Web App: пробуем разблокировать аудио...");
+    // Пробуем разблокировать аудио
+    if (!state.audioUnlocked) {
         unlockAudio();
     }
 }
@@ -198,7 +216,7 @@ function getAvailableAudioInstance(soundName) {
     return newInstance;
 }
 
-// Улучшенная функция воспроизведения звука для Telegram Web App
+// Улучшенная функция воспроизведения звука
 function playSound(soundName) {
     // Проверяем cooldown для частых звуков
     const now = Date.now();
@@ -219,8 +237,8 @@ function playSound(soundName) {
     
     state.lastSoundTime = now;
     
-    // В Telegram Web App для частых звуков увеличиваем cooldown
-    if (state.isTelegram && frequentSounds.includes(soundName) && soundName !== 'next') {
+    // Для частых звуков увеличиваем cooldown на мобильных
+    if (state.isMobile && frequentSounds.includes(soundName) && soundName !== 'next') {
         state.soundCooldown = 150;
     } else {
         state.soundCooldown = 0;
@@ -276,10 +294,10 @@ function playSound(soundName) {
     }
 }
 
-// Функция для воспроизведения тихого next.mp3 (синхронизированного)
+// Функция для воспроизведения тихого next.mp3
 function playQuietNextSound() {
     const now = Date.now();
-    if (now - state.nextSoundCooldown < 80) return; // 80ms cooldown для next
+    if (now - state.nextSoundCooldown < 80) return;
     
     state.nextSoundCooldown = now;
     
@@ -312,12 +330,11 @@ function playQuietNextSound() {
     }
 }
 
-// Улучшенная функция для звука таймера (решает проблему с цифрой 4)
+// Функция для звука таймера
 function playTimerSound(number) {
     const now = Date.now();
     
-    // Проверяем, не воспроизводился ли этот звук недавно
-    if (now - state.lastTimerSound < 500) { // 500ms между звуками таймера
+    if (now - state.lastTimerSound < 500) {
         return;
     }
     
@@ -339,19 +356,13 @@ function playTimerSound(number) {
         let playbackRate = 1.0;
         switch(number) {
             case 5: playbackRate = 0.7; break;
-            case 4: playbackRate = 0.85; break; // Изменено с 0.8 на 0.85
-            case 3: playbackRate = 0.95; break; // Изменено с 0.9 на 0.95
-            case 2: playbackRate = 1.15; break; // Изменено с 1.1 на 1.15
-            case 1: playbackRate = 1.35; break; // Изменено с 1.3 на 1.35
+            case 4: playbackRate = 0.85; break;
+            case 3: playbackRate = 0.95; break;
+            case 2: playbackRate = 1.15; break;
+            case 1: playbackRate = 1.35; break;
         }
         
         state.timerPlaybackRate = playbackRate;
-        
-        // Останавливаем все текущие звуки таймера
-        state.activeTimerSounds.forEach(timerId => {
-            clearTimeout(timerId);
-        });
-        state.activeTimerSounds.clear();
         
         // Сбрасываем состояние воспроизведения
         state.isTimerPlaying = false;
@@ -368,22 +379,17 @@ function playTimerSound(number) {
             
             if (playPromise !== undefined) {
                 playPromise.then(() => {
-                    // ID для отслеживания этого звука
-                    const timerId = setTimeout(() => {
+                    setTimeout(() => {
                         state.isTimerPlaying = false;
                         soundInstance.playbackRate = 1.0;
-                        state.activeTimerSounds.delete(timerId);
                     }, 1000);
-                    
-                    state.activeTimerSounds.add(timerId);
-                    
                 }).catch(e => {
                     console.log("Таймер аудио не воспроизвелся:", e);
                     state.isTimerPlaying = false;
                     soundInstance.playbackRate = 1.0;
                 });
             }
-        }, 50); // 50ms пауза
+        }, 50);
         
     } catch (e) {
         console.log("Ошибка воспроизведения таймера:", e);
@@ -391,75 +397,34 @@ function playTimerSound(number) {
     }
 }
 
-// Функция для разблокировки аудио в Telegram Web App
+// Функция для разблокировки аудио
 function unlockAudio() {
     if (state.audioUnlocked) return;
     
     console.log("Разблокировка аудио...");
     
-    // В Telegram Web App используем специальный подход
-    if (state.isTelegram) {
-        // Создаем очень тихий звук и пытаемся воспроизвести
-        const unlockSound = new Audio();
-        unlockSound.volume = 0.0001;
+    // Для локальной разработки
+    state.userInteracted = true;
+    
+    try {
+        const testSound = new Audio();
+        testSound.volume = 0.001;
+        testSound.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAZGF0YQ';
         
-        // Используем один из предзагруженных звуков
-        if (audio.start && audio.start[0]) {
-            unlockSound.src = soundFiles.start;
-        } else {
-            // Короткий silent audio
-            unlockSound.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAZGF0YQ';
-        }
-        
-        unlockSound.play().then(() => {
-            console.log("Аудио разблокировано в Telegram!");
+        testSound.play().then(() => {
             state.audioUnlocked = true;
-            state.userInteracted = true;
-            
             setTimeout(() => {
-                unlockSound.pause();
-                unlockSound.currentTime = 0;
+                testSound.pause();
+                testSound.currentTime = 0;
             }, 10);
-            
-            // Воспроизводим очередь
             processSoundQueue();
-            
-        }).catch(e => {
-            console.log("Прямая разблокировка не удалась:", e);
-            
-            // Альтернативный метод: отмечаем как разблокированное через секунду
-            setTimeout(() => {
-                console.log("Принудительно разблокируем аудио для Telegram Web App");
-                state.audioUnlocked = true;
-                state.userInteracted = true;
-                processSoundQueue();
-            }, 1000);
-        });
-    } else {
-        // Для обычных браузеров
-        state.userInteracted = true;
-        
-        // Пытаемся воспроизвести тихий звук
-        try {
-            const testSound = new Audio();
-            testSound.volume = 0.001;
-            testSound.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAZGF0YQ';
-            
-            testSound.play().then(() => {
-                state.audioUnlocked = true;
-                setTimeout(() => {
-                    testSound.pause();
-                    testSound.currentTime = 0;
-                }, 10);
-                processSoundQueue();
-            }).catch(() => {
-                state.audioUnlocked = true;
-                processSoundQueue();
-            });
-        } catch (e) {
+        }).catch(() => {
             state.audioUnlocked = true;
             processSoundQueue();
-        }
+        });
+    } catch (e) {
+        state.audioUnlocked = true;
+        processSoundQueue();
     }
 }
 
@@ -487,7 +452,7 @@ function processSoundQueue() {
         }
         
         // Задержка между звуками в очереди
-        setTimeout(playNextFromQueue, state.isTelegram ? 80 : 40);
+        setTimeout(playNextFromQueue, 40);
     };
     
     playNextFromQueue();
@@ -679,24 +644,8 @@ function startGame() {
     state.isBusy = true;
     state.gamePhase = 'creating';
     
-    // В Telegram Web App пытаемся воспроизвести start звук ДО анимации
-    if (state.isTelegram) {
-        // Форсируем воспроизведение start звука
-        try {
-            const startSound = getAvailableAudioInstance('start');
-            if (startSound.readyState >= 2) {
-                startSound.currentTime = 0;
-                startSound.play().catch(e => {
-                    console.log("Start звук не воспроизвелся:", e);
-                });
-            }
-        } catch (e) {
-            console.log("Ошибка start звука:", e);
-        }
-    } else {
-        // Для обычных браузеров стандартный вызов
-        playSound('start');
-    }
+    // Воспроизводим start звук
+    playSound('start');
     
     stopIdle();
     
@@ -708,43 +657,43 @@ function startGame() {
     
     hideButtonWithAnimation(elements.startBtn);
     
-    let duration = 0;
+    // Сбрасываем таймер создания
+    state.creationStartTime = Date.now();
+    state.creationDuration = 0;
+    
     if (state.fastCycle) {
         cancelAnimationFrame(state.fastCycle);
         state.fastCycle = null;
     }
     
-    let lastTime = 0;
+    let lastChangeTime = 0;
     let changeSoundCounter = 0;
     
     const animateCreation = (timestamp) => {
         if (!state.fastCycle) return;
         
-        if (timestamp - lastTime > 50) {
-            lastTime = timestamp;
+        const currentTime = Date.now();
+        const elapsedTime = currentTime - state.creationStartTime;
+        
+        // Меняем персонажа каждые 50ms (20 раз в секунду)
+        if (currentTime - lastChangeTime > 50) {
+            lastChangeTime = currentTime;
+            
             const temp = {};
             state.parts.forEach(p => {
                 const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
                 temp[p] = getRandomOrderItem(p, randomIndex);
             });
             render(elements.characterDisplay, temp);
-            duration += 50;
             
-            // В Telegram Web App проигрываем change звук чаще
+            // Воспроизводим звук change каждые 4 изменения (примерно 200ms)
             changeSoundCounter++;
-            if (state.isTelegram) {
-                // Каждый 3-й кадр (примерно 150ms)
-                if (changeSoundCounter % 3 === 0) {
-                    playSound('change');
-                }
-            } else {
-                // Каждый 4-й кадр (примерно 200ms) для обычных браузеров
-                if (changeSoundCounter % 4 === 0) {
-                    playSound('change');
-                }
+            if (changeSoundCounter % 4 === 0) {
+                playSound('change');
             }
             
-            if (duration >= 2000) {
+            // Проверяем, прошло ли 2 секунды
+            if (elapsedTime >= 2000) {
                 cancelAnimationFrame(state.fastCycle);
                 state.fastCycle = null;
                 finalizeTarget();
@@ -814,7 +763,7 @@ function finalizeTarget() {
                     setTimeout(() => {
                         elements.timer.classList.remove('show');
                         startSelecting();
-                    }, 400); // Увеличена задержка
+                    }, 400);
                 }
             }, 1000);
         }, 400);
@@ -839,7 +788,7 @@ function startSelecting() {
     }, 400);
 }
 
-// Цикл выбора текущей части персонажа - ОПТИМИЗИРОВАН ДЛЯ ЗВУКА NEXT
+// Цикл выбора текущей части персонажа
 function nextCycle() {
     if (state.currentPart >= state.parts.length) { finish(); return; }
     
@@ -868,7 +817,6 @@ function nextCycle() {
     
     // Счетчик для управления звуками
     let soundCounter = 0;
-    let lastSoundIdx = -1;
     
     const cycle = () => {
         idx = (idx + 1) % state.partCounts[type];
@@ -893,8 +841,8 @@ function nextCycle() {
                     playSoundChance = 0.8; // 80% шанс
                 }
                 
-                // В Telegram Web App еще реже для очень быстрой скорости
-                if (state.isTelegram && finalSpeed < 300) {
+                // На мобильных реже для очень быстрой скорости
+                if (state.isMobile && finalSpeed < 300) {
                     playSoundChance = 0.4; // 40% шанс
                 }
                 
@@ -905,7 +853,6 @@ function nextCycle() {
             }
         }
         state.isFirstChangeInCycle = false;
-        lastSoundIdx = idx;
     };
     
     if (state.currentPart === 0) {
@@ -967,7 +914,7 @@ function select() {
         setTimeout(() => { 
             state.canSelect = true;
             nextCycle(); 
-        }, 200); // Увеличена задержка
+        }, 200);
     }
     
     return true;
@@ -1048,22 +995,8 @@ function reset() {
     elements.resultAgainBtn.style.cursor = 'not-allowed';
     elements.resultAgainBtn.style.opacity = '0.7';
     
-    // В Telegram Web App форсируем repeat звук
-    if (state.isTelegram) {
-        try {
-            const repeatSound = getAvailableAudioInstance('repeat');
-            if (repeatSound.readyState >= 2) {
-                repeatSound.currentTime = 0;
-                repeatSound.play().catch(e => {
-                    console.log("Repeat звук не воспроизвелся:", e);
-                });
-            }
-        } catch (e) {
-            console.log("Ошибка repeat звука:", e);
-        }
-    } else {
-        playSound('repeat');
-    }
+    // Воспроизводим repeat звук
+    playSound('repeat');
     
     state.round++;
     elements.resultScreen.classList.remove('show');
@@ -1224,13 +1157,11 @@ window.onload = async () => {
         document.removeEventListener('touchstart', initAudioTouch);
     }, { once: true });
     
-    // В Telegram Web App дополнительно пробуем разблокировать через 2 секунды
-    if (state.isTelegram) {
-        setTimeout(() => {
-            if (!state.audioUnlocked) {
-                console.log("Telegram Web App: автоматическая разблокировка аудио");
-                unlockAudio();
-            }
-        }, 2000);
-    }
+    // Для локальной разработки: пробуем разблокировать через 1 секунду
+    setTimeout(() => {
+        if (!state.audioUnlocked) {
+            console.log("Автоматическая разблокировка аудио для локальной разработки");
+            unlockAudio();
+        }
+    }, 1000);
 };
