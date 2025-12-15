@@ -34,12 +34,6 @@ const state = {
     audioInitialized: false,
     userInteracted: false,
     debugMode: true,
-    timerSounds: [],
-    canPressSpace: true,
-    resultScreenVisible: false,
-    chooseSoundInstances: [],
-    changeSoundPlayed: false,
-    startSoundPlayed: false,
     // Определение браузера и платформы
     isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream,
     isSafari: /^((?!chrome|android).)*safari/i.test(navigator.userAgent),
@@ -50,43 +44,42 @@ const state = {
     isTelegramWebApp: window.Telegram && window.Telegram.WebApp,
     // Флаги для аудио
     audioUnlocked: false,
-    audioContext: null,
-    // Хранилища звуков
-    audioBuffers: {},
-    soundElements: {},
-    soundPromises: {},
-    // Очереди и кэши
-    soundQueue: [],
-    isProcessingQueue: false,
-    lastPlayTime: {},
-    // Safari-specific оптимизации
-    safariAudioFixApplied: false,
-    soundRetryCounts: {},
-    soundCache: {}, // Кэш для часто используемых звуков
-    // ИСПРАВЛЕНИЕ: флаги для предотвращения дублирования звуков
-    criticalSoundsLoaded: false,
-    repeatSoundInstance: null,
-    changeSoundInstance: null,
-    startSoundInstance: null,
-    chooseSoundInstance: null,
-    timerSoundInstance: null,
-    // ИСПРАВЛЕНИЕ: Флаги для предотвращения дублирования звуков
-    isPlayingSound: {},
+    // ИСПРАВЛЕНИЕ: Упрощенная система звуков
+    soundInstances: {
+        start: [],
+        choose: [],
+        repeat: [],
+        timer: [],
+        change: [],
+        victory: [],
+        vic: [],
+        loss: []
+    },
+    currentSoundIndex: {
+        start: 0,
+        choose: 0,
+        repeat: 0,
+        timer: 0,
+        change: 0,
+        victory: 0,
+        vic: 0,
+        loss: 0
+    },
     // ИСПРАВЛЕНИЕ: Громкость звуков
     volumes: {
-        timer: 1.0,     // Увеличиваем громкость таймера
-        choose: 1.0,
-        start: 1.0,
-        repeat: 1.0,
-        change: 1.0,
-        victory: 1.0,
-        vic: 1.0,
-        loss: 1.0
+        timer: 1.0,
+        choose: 0.9,
+        start: 0.9,
+        repeat: 0.9,
+        change: 0.9,
+        victory: 0.9,
+        vic: 0.9,
+        loss: 0.9
     },
-    // ИСПРАВЛЕНИЕ: Флаги для обработки касаний
+    // Флаги для обработки касаний
     touchStartedOnButton: false,
     currentTouchButton: null,
-    // ИСПРАВЛЕНИЕ: Флаг загрузки изображений
+    // Флаг загрузки изображений
     imagesLoaded: false
 };
 
@@ -107,19 +100,6 @@ const elements = {
     resultText: document.getElementById('result-text'),
     resultTarget: document.getElementById('result-target'),
     resultPlayer: document.getElementById('result-player')
-};
-
-// Объект для хранения звуков
-const audio = {
-    start: null,
-    choose: null,
-    repeat: null,
-    timer: null,
-    timerEnd: null,
-    change: null,
-    victory: null,
-    vic: null,
-    loss: null
 };
 
 // ИСПРАВЛЕНИЕ: Функция для плавной смены текста в instruction
@@ -145,650 +125,253 @@ function setInstructionText(text, immediate = false) {
 }
 
 // ============================
-// SAFARI-SPECIFIC ФИКСЫ
+// УПРОЩЕННАЯ СИСТЕМА ЗВУКОВ
 // ============================
 
-// Фикс для Safari на Mac (задержки звуков)
-function applySafariAudioFix() {
-    if (!state.isSafari || state.safariAudioFixApplied) return;
-    
-    console.log('Применяем Safari audio фикс...');
-    state.safariAudioFixApplied = true;
-    
-    // 1. Создаем скрытый аудио элемент для "разогрева"
-    const warmUpAudio = document.createElement('audio');
-    warmUpAudio.style.display = 'none';
-    warmUpAudio.volume = 0.001;
-    warmUpAudio.src = 'sounds/timer.mp3';
-    document.body.appendChild(warmUpAudio);
-    
-    // 2. "Разогрев" аудио системы
-    setTimeout(() => {
-        try {
-            warmUpAudio.play().then(() => {
-                warmUpAudio.pause();
-                warmUpAudio.currentTime = 0;
-                console.log('✓ Safari audio разогрет');
-            }).catch(() => {
-                // Игнорируем ошибки разогрева
-            });
-        } catch (e) {
-            // Игнорируем ошибки
-        }
-    }, 500);
-    
-    // 3. Устанавливаем глобальные обработчики для Safari
-    document.addEventListener('click', () => {
-        if (!state.audioUnlocked) {
-            unlockAudioSystem();
-        }
-    }, { once: true });
-    
-    return true;
-}
-
-// Инициализация AudioContext с фиксами для Safari
-function initAudioContext() {
-    if (state.audioContext) return state.audioContext;
-    
-    try {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (!AudioContext) return null;
-        
-        state.audioContext = new AudioContext();
-        
-        // Safari может требовать возобновления контекста
-        if (state.audioContext.state === 'suspended') {
-            const resumeAudio = () => {
-                if (state.audioContext && state.audioContext.state === 'suspended') {
-                    state.audioContext.resume().then(() => {
-                        console.log('✓ AudioContext возобновлен');
-                    });
-                }
-                document.removeEventListener('click', resumeAudio);
-                document.removeEventListener('touchstart', resumeAudio);
-            };
-            
-            document.addEventListener('click', resumeAudio);
-            document.addEventListener('touchstart', resumeAudio);
-        }
-        
-        console.log('✓ AudioContext создан');
-        return state.audioContext;
-    } catch (error) {
-        console.warn('AudioContext не доступен:', error);
-        return null;
-    }
-}
-
-// Загрузка звука с кэшированием (особенно важно для Safari)
-function loadSoundWithCache(src, soundName, critical = false) {
-    // Проверяем кэш
-    if (state.soundCache[soundName]) {
-        return Promise.resolve(state.soundCache[soundName]);
-    }
-    
-    return new Promise((resolve) => {
-        // Проверяем, не загружается ли уже
-        if (state.soundPromises[soundName]) {
-            state.soundPromises[soundName].then(resolve);
-            return;
-        }
-        
-        console.log(`Загрузка звука: ${soundName} (critical: ${critical})`);
-        
-        const audioElement = new Audio();
-        
-        // Критически важные атрибуты для Safari и Telegram Web App
-        audioElement.preload = 'auto';
-        audioElement.controls = false;
-        
-        // Telegram Web App требует особых атрибутов
-        if (state.isIOS || state.isSafari || state.isTelegramWebApp) {
-            audioElement.setAttribute('playsinline', 'true');
-            audioElement.setAttribute('webkit-playsinline', 'true');
-            audioElement.playsInline = true;
-            audioElement.webkitPlaysInline = true;
-            audioElement.muted = false;
-        }
-        
-        // Для Telegram Web App добавляем дополнительные атрибуты
-        if (state.isTelegramWebApp) {
-            audioElement.setAttribute('muted', 'false');
-        }
-        
-        audioElement.src = src;
-        
-        const promise = new Promise((innerResolve) => {
-            const onCanPlay = () => {
-                console.log(`✓ ${soundName} готов к воспроизведению`);
-                audioElement.removeEventListener('canplaythrough', onCanPlay);
-                audioElement.removeEventListener('error', onError);
-                
-                // Сохраняем в кэш
-                state.soundCache[soundName] = audioElement;
-                state.soundElements[soundName] = audioElement;
-                audio[soundName] = audioElement;
-                
-                // ИСПРАВЛЕНИЕ: сохраняем отдельные экземпляры для критических звуков
-                if (soundName === 'repeat') {
-                    state.repeatSoundInstance = audioElement;
-                } else if (soundName === 'change') {
-                    state.changeSoundInstance = audioElement;
-                } else if (soundName === 'start') {
-                    state.startSoundInstance = audioElement;
-                } else if (soundName === 'choose') {
-                    state.chooseSoundInstance = audioElement;
-                } else if (soundName === 'timer') {
-                    state.timerSoundInstance = audioElement;
-                }
-                
-                innerResolve(audioElement);
-            };
-            
-            const onError = (e) => {
-                console.warn(`✗ Ошибка загрузки ${soundName}:`, e.target.error);
-                audioElement.removeEventListener('canplaythrough', onCanPlay);
-                audioElement.removeEventListener('error', onError);
-                
-                // Для критических звуков пробуем создать резервный элемент
-                if (critical) {
-                    console.log(`Создаем резервный элемент для ${soundName}`);
-                    const backupAudio = new Audio();
-                    backupAudio.preload = 'auto';
-                    backupAudio.src = src;
-                    
-                    if (state.isIOS || state.isSafari || state.isTelegramWebApp) {
-                        backupAudio.setAttribute('playsinline', 'true');
-                        backupAudio.setAttribute('webkit-playsinline', 'true');
-                        backupAudio.muted = false;
-                    }
-                    
-                    if (state.isTelegramWebApp) {
-                        backupAudio.setAttribute('muted', 'false');
-                    }
-                    
-                    // Сохраняем резервный элемент
-                    if (soundName === 'repeat') {
-                        state.repeatSoundInstance = backupAudio;
-                    } else if (soundName === 'change') {
-                        state.changeSoundInstance = backupAudio;
-                    } else if (soundName === 'start') {
-                        state.startSoundInstance = backupAudio;
-                    } else if (soundName === 'timer') {
-                        state.timerSoundInstance = backupAudio;
-                    }
-                    
-                    innerResolve(backupAudio);
-                } else {
-                    innerResolve(null);
-                }
-            };
-            
-            audioElement.addEventListener('canplaythrough', onCanPlay, { once: true });
-            audioElement.addEventListener('error', onError, { once: true });
-            
-            // Начинаем загрузку
-            try {
-                audioElement.load();
-            } catch (e) {
-                console.warn(`load() ошибка для ${soundName}:`, e);
-                // Пробуем все равно
-                innerResolve(audioElement);
-            }
-        });
-        
-        state.soundPromises[soundName] = promise;
-        promise.then(resolve);
-    });
-}
-
-// ИСПРАВЛЕНИЕ: Специальная функция для загрузки критических звуков
-function loadCriticalSounds() {
-    console.log('Загрузка критических звуков...');
-    
-    // Критические звуки которые часто не проигрываются
-    const criticalSounds = [
-        { src: 'sounds/start.mp3', name: 'start', volume: state.volumes.start },
-        { src: 'sounds/choose.mp3', name: 'choose', volume: state.volumes.choose },
-        { src: 'sounds/timer.mp3', name: 'timer', volume: state.volumes.timer },
-        { src: 'sounds/repeat.mp3', name: 'repeat', volume: state.volumes.repeat },
-        { src: 'sounds/result.mp3', name: 'change', volume: state.volumes.change }
-    ];
-    
-    const loadPromises = criticalSounds.map(({ src, name, volume }) => {
-        return loadSoundWithCache(src, name, true).then(sound => {
-            if (sound) {
-                // Предварительно устанавливаем громкость
-                sound.volume = volume;
-                console.log(`✓ Критический звук ${name} загружен`);
-            } else {
-                console.warn(`✗ Критический звук ${name} не загружен`);
-            }
-            return sound;
-        });
-    });
-    
-    return Promise.all(loadPromises).then(() => {
-        state.criticalSoundsLoaded = true;
-        console.log('✓ Все критические звуки загружены');
-    });
-}
-
-// Создание экземпляров для часто используемых звуков
-function createSoundInstances() {
-    // Для choose создаем больше экземпляров, особенно для Telegram Web App
-    state.chooseSoundInstances = [];
-    const chooseCount = (state.isTelegramWebApp || state.isSafari || state.isIOS) ? 8 : 4;
-    
-    for (let i = 0; i < chooseCount; i++) {
-        loadSoundWithCache('sounds/choose.mp3', `choose_${i}`).then(sound => {
-            if (sound) {
-                state.chooseSoundInstances.push({
-                    sound: sound,
-                    isPlaying: false,
-                    lastPlayTime: 0,
-                    index: i
-                });
-            }
-        });
-    }
-}
-
-// Инициализация всех звуков с приоритетом для важных
-function initAudioElements() {
-    console.log('Инициализация аудио элементов...');
+// ИСПРАВЛЕНИЕ: Простая и надежная система звуков
+function initAudioSystem() {
+    console.log('Инициализация системы звуков...');
     console.log('Браузер:', state.isSafari ? 'Safari' : state.isChrome ? 'Chrome' : state.isFirefox ? 'Firefox' : 'Другой');
     console.log('Платформа:', state.isIOS ? 'iOS' : state.isMac ? 'Mac' : state.isMobile ? 'Android' : 'Desktop');
     console.log('Telegram Web App:', state.isTelegramWebApp ? 'Да' : 'Нет');
     
-    // Применяем Safari фикс
+    // Создаем экземпляры для каждого звука
+    const soundConfigs = [
+        { name: 'start', src: 'sounds/start.mp3', instances: 3, volume: state.volumes.start },
+        { name: 'choose', src: 'sounds/choose.mp3', instances: 5, volume: state.volumes.choose },
+        { name: 'repeat', src: 'sounds/repeat.mp3', instances: 2, volume: state.volumes.repeat },
+        { name: 'timer', src: 'sounds/timer.mp3', instances: 5, volume: state.volumes.timer },
+        { name: 'change', src: 'sounds/result.mp3', instances: 2, volume: state.volumes.change },
+        { name: 'victory', src: 'sounds/victory.mp3', instances: 2, volume: state.volumes.victory },
+        { name: 'vic', src: 'sounds/vic.mp3', instances: 2, volume: state.volumes.vic },
+        { name: 'loss', src: 'sounds/loss.mp3', instances: 2, volume: state.volumes.loss }
+    ];
+    
+    // Для Safari и Telegram создаем больше экземпляров
     if (state.isSafari || state.isTelegramWebApp) {
-        applySafariAudioFix();
-    }
-    
-    // Инициализируем AudioContext
-    initAudioContext();
-    
-    // ИСПРАВЛЕНИЕ: Сначала загружаем КРИТИЧЕСКИЕ звуки
-    loadCriticalSounds().then(() => {
-        // Затем создаем экземпляры
-        createSoundInstances();
-        
-        // Затем загружаем остальные звуки
-        const resultSounds = [
-            ['sounds/victory.mp3', 'victory'],
-            ['sounds/vic.mp3', 'vic'],
-            ['sounds/loss.mp3', 'loss']
-        ];
-        
-        resultSounds.forEach(([src, name]) => {
-            loadSoundWithCache(src, name);
+        soundConfigs.forEach(config => {
+            config.instances *= 2; // Удваиваем количество экземпляров
         });
+    }
+    
+    // Загружаем звуки
+    soundConfigs.forEach(config => {
+        state.soundInstances[config.name] = [];
         
-        state.soundsLoaded = true;
-        console.log('✓ Все звуки загружены');
+        for (let i = 0; i < config.instances; i++) {
+            const audio = new Audio();
+            audio.src = config.src;
+            audio.volume = config.volume;
+            audio.preload = 'auto';
+            
+            // Критически важные атрибуты для Safari и Telegram
+            if (state.isIOS || state.isSafari || state.isTelegramWebApp) {
+                audio.setAttribute('playsinline', 'true');
+                audio.setAttribute('webkit-playsinline', 'true');
+                audio.playsInline = true;
+                audio.webkitPlaysInline = true;
+                audio.muted = false;
+            }
+            
+            // Для Telegram добавляем дополнительные атрибуты
+            if (state.isTelegramWebApp) {
+                audio.setAttribute('muted', 'false');
+            }
+            
+            // Предзагружаем
+            audio.load();
+            
+            state.soundInstances[config.name].push({
+                audio: audio,
+                isPlaying: false,
+                index: i
+            });
+        }
+        
+        console.log(`✓ ${config.name}: ${config.instances} экземпляров создано`);
     });
+    
+    state.soundsLoaded = true;
+    console.log('✓ Система звуков инициализирована');
+    
+    // Разблокируем аудио при первом взаимодействии
+    setupAudioUnlock();
 }
 
-// ИСПРАВЛЕНИЕ: Упрощенная очередь для предотвращения дублирования
-function addToSoundQueue(soundName, playFunction) {
-    const now = Date.now();
-    
-    // Проверяем, не воспроизводится ли уже этот звук
-    if (state.isPlayingSound[soundName]) {
-        console.log(`Звук ${soundName} уже воспроизводится, пропускаем`);
-        return;
+// ИСПРАВЛЕНИЕ: Надежное воспроизведение звука
+function playSound(soundName) {
+    if (!state.audioEnabled || !state.soundsLoaded) {
+        console.log(`Аудио не готово для ${soundName}`);
+        return false;
     }
     
-    // Проверяем минимальную задержку между одинаковыми звуками
-    const minDelay = 100; // 100мс минимальная задержка
-    const timeSinceLast = now - (state.lastPlayTime[soundName] || 0);
-    
-    if (timeSinceLast < minDelay) {
-        // Запускаем с небольшой задержкой
-        console.log(`Задержка для ${soundName}: ${minDelay - timeSinceLast}мс`);
-        setTimeout(() => {
-            addToSoundQueue(soundName, playFunction);
-        }, minDelay - timeSinceLast);
-        return;
+    const instances = state.soundInstances[soundName];
+    if (!instances || instances.length === 0) {
+        console.warn(`Нет экземпляров для звука ${soundName}`);
+        return false;
     }
     
-    // Устанавливаем флаг воспроизведения
-    state.isPlayingSound[soundName] = true;
+    // Используем round-robin для выбора экземпляра
+    const index = state.currentSoundIndex[soundName] % instances.length;
+    state.currentSoundIndex[soundName]++;
     
-    // Выполняем функцию воспроизведения
-    playFunction();
+    const instance = instances[index];
     
-    // Запоминаем время воспроизведения
-    state.lastPlayTime[soundName] = now;
+    // Если экземпляр уже воспроизводится, пропускаем
+    if (instance.isPlaying) {
+        console.log(`Экземпляр ${soundName}-${index} уже воспроизводится`);
+        return false;
+    }
     
-    // Сбрасываем флаг через время
-    setTimeout(() => {
-        state.isPlayingSound[soundName] = false;
-    }, 300);
+    try {
+        // Сбрасываем и воспроизводим
+        instance.audio.currentTime = 0;
+        instance.isPlaying = true;
+        
+        // Для Safari/Telegram: дополнительные проверки
+        if (state.isSafari || state.isTelegramWebApp) {
+            instance.audio.setAttribute('playsinline', 'true');
+            instance.audio.setAttribute('webkit-playsinline', 'true');
+        }
+        
+        const playPromise = instance.audio.play();
+        
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                console.log(`✓ ${soundName} воспроизведен (экземпляр ${index})`);
+                
+                // Сбрасываем флаг через время звука
+                setTimeout(() => {
+                    instance.isPlaying = false;
+                }, 1000);
+                
+            }).catch(error => {
+                console.warn(`✗ ${soundName} ошибка: ${error.name}`);
+                instance.isPlaying = false;
+                
+                // Для Web App: пробуем альтернативный метод
+                if (state.isTelegramWebApp) {
+                    setTimeout(() => {
+                        try {
+                            instance.audio.play().catch(() => {});
+                        } catch (e) {
+                            // Игнорируем ошибку
+                        }
+                    }, 50);
+                }
+            });
+        } else {
+            // Старые браузеры
+            instance.audio.play();
+            console.log(`✓ ${soundName} воспроизведен (старый браузер)`);
+            
+            setTimeout(() => {
+                instance.isPlaying = false;
+            }, 1000);
+        }
+        
+        return true;
+        
+    } catch (error) {
+        console.warn(`Исключение для ${soundName}:`, error);
+        instance.isPlaying = false;
+        return false;
+    }
 }
 
-// Разблокировка аудио системы с улучшениями для Safari
-function unlockAudioSystem() {
-    if (state.audioUnlocked) {
-        console.log('Аудио уже разблокировано');
-        return Promise.resolve();
-    }
+// Специальные функции для проблемных звуков
+function playStartSound() {
+    console.log('playStartSound вызван');
+    return playSound('start');
+}
+
+function playChooseSound() {
+    console.log('playChooseSound вызван');
+    return playSound('choose');
+}
+
+function playRepeatSound() {
+    console.log('playRepeatSound вызван');
+    return playSound('repeat');
+}
+
+function playTimerSound(number) {
+    if (number < 0) return;
+    console.log(`playTimerSound ${number} вызван`);
+    return playSound('timer');
+}
+
+function playChangeSound() {
+    console.log('playChangeSound вызван');
+    return playSound('change');
+}
+
+// ИСПРАВЛЕНИЕ: Настройка разблокировки аудио
+function setupAudioUnlock() {
+    console.log('Настройка разблокировки аудио...');
     
-    console.log('=== РАЗБЛОКИРОВКА АУДИО СИСТЕМЫ ===');
-    
-    return new Promise((resolve) => {
+    // Функция разблокировки
+    const unlockAudio = () => {
+        if (state.audioUnlocked) return;
+        
+        console.log('=== РАЗБЛОКИРОВКА АУДИО ===');
         state.audioUnlocked = true;
         state.userInteracted = true;
         
         // Для Safari/Telegram: тестовое воспроизведение
         if (state.isSafari || state.isTelegramWebApp) {
-            safariUnlockSequence().then(() => {
-                state.audioInitialized = true;
-                console.log('✓ Safari/Telegram аудио разблокировано');
-                resolve(true);
-            }).catch(() => {
-                state.audioInitialized = true;
-                console.log('Safari/Telegram аудио разблокировано (с ошибками)');
-                resolve(true);
-            });
-        } else {
-            state.audioInitialized = true;
-            console.log('✓ Аудио система разблокирована');
-            resolve(true);
-        }
-    });
-}
-
-// Специальная последовательность разблокировки для Safari
-function safariUnlockSequence() {
-    return new Promise((resolve) => {
-        console.log('Safari/Telegram unlock sequence...');
-        
-        // 1. Возобновляем AudioContext если нужно
-        if (state.audioContext && state.audioContext.state === 'suspended') {
-            state.audioContext.resume().then(() => {
-                console.log('✓ AudioContext возобновлен');
-            });
-        }
-        
-        // 2. Тестовое воспроизведение тихого звука
-        setTimeout(() => {
-            try {
-                const testAudio = new Audio('sounds/timer.mp3');
-                testAudio.volume = 0.001;
-                testAudio.setAttribute('playsinline', 'true');
-                testAudio.setAttribute('webkit-playsinline', 'true');
-                
-                if (state.isTelegramWebApp) {
-                    testAudio.setAttribute('muted', 'false');
+            setTimeout(() => {
+                try {
+                    // Пробуем воспроизвести тихий звук
+                    const testAudio = new Audio('sounds/timer.mp3');
+                    testAudio.volume = 0.001;
+                    testAudio.setAttribute('playsinline', 'true');
+                    
+                    if (state.isTelegramWebApp) {
+                        testAudio.setAttribute('muted', 'false');
+                    }
+                    
+                    testAudio.play().then(() => {
+                        testAudio.pause();
+                        testAudio.currentTime = 0;
+                        console.log('✓ Тестовое воспроизведение успешно');
+                    }).catch(() => {
+                        console.log('Тестовое воспроизведение не удалось');
+                    });
+                } catch (e) {
+                    console.warn('Тестовое воспроизведение исключение:', e);
                 }
-                
-                testAudio.play().then(() => {
-                    testAudio.pause();
-                    testAudio.currentTime = 0;
-                    console.log('✓ Safari/Telegram тестовое воспроизведение успешно');
-                    resolve();
-                }).catch(error => {
-                    console.log('Safari/Telegram тестовое воспроизведение не удалось:', error.message);
-                    resolve(); // Все равно разрешаем
-                });
-            } catch (e) {
-                console.warn('Safari/Telegram тестовое воспроизведение исключение:', e);
-                resolve();
-            }
-        }, 100);
-    });
-}
-
-// ============================
-// УЛУЧШЕННЫЕ ФУНКЦИИ ВОСПРОИЗВЕДЕНИЯ
-// ============================
-
-// ИСПРАВЛЕНИЕ: Надежная функция воспроизведения звука без дублирования
-function playSoundReliable(soundName, customVolume = null) {
-    if (!state.audioEnabled) {
-        console.log(`Аудио отключено для ${soundName}`);
-        return false;
-    }
-    
-    // Если аудио не инициализировано, пробуем инициализировать
-    if (!state.audioInitialized) {
-        console.log(`Аудио не инициализировано для ${soundName}, пробуем разблокировать`);
-        unlockAudioSystem().then(() => {
-            // Повторяем попытку через небольшой интервал
-            setTimeout(() => playSoundReliable(soundName, customVolume), 50);
+            }, 100);
+        }
+        
+        console.log('✓ Аудио система разблокирована');
+        
+        // Убираем обработчики после разблокировки
+        events.forEach(event => {
+            document.removeEventListener(event, unlockAudio);
         });
-        return false;
-    }
+    };
     
-    const volume = customVolume !== null ? customVolume : (state.volumes[soundName] || 1.0);
-    
-    console.log(`Воспроизведение ${soundName} (volume: ${volume})`);
-    
-    // Добавляем в очередь с защитой от дублирования
-    addToSoundQueue(soundName, () => {
-        actuallyPlaySound(soundName, volume);
+    // Обработчики для всех типов взаимодействий
+    const events = ['click', 'touchstart', 'mousedown', 'pointerdown', 'keydown'];
+    events.forEach(event => {
+        document.addEventListener(event, unlockAudio, { once: true });
     });
     
-    return true;
-}
-
-// Фактическое воспроизведение звука
-function actuallyPlaySound(soundName, volume) {
-    // Получаем звук
-    let sound = state.soundCache[soundName] || state.soundElements[soundName] || audio[soundName];
-    
-    // ИСПРАВЛЕНИЕ: Для критических звуков используем специальные экземпляры
-    if (!sound) {
-        if (soundName === 'repeat' && state.repeatSoundInstance) {
-            sound = state.repeatSoundInstance;
-        } else if (soundName === 'change' && state.changeSoundInstance) {
-            sound = state.changeSoundInstance;
-        } else if (soundName === 'start' && state.startSoundInstance) {
-            sound = state.startSoundInstance;
-        } else if (soundName === 'choose' && state.chooseSoundInstance) {
-            sound = state.chooseSoundInstance;
-        } else if (soundName === 'timer' && state.timerSoundInstance) {
-            sound = state.timerSoundInstance;
+    // Автоматическая попытка разблокировки через 2 секунды
+    setTimeout(() => {
+        if (!state.audioUnlocked) {
+            console.log('Автоматическая разблокировка аудио');
+            unlockAudio();
         }
-    }
-    
-    if (!sound) {
-        console.warn(`Звук ${soundName} не найден, создаем новый`);
-        try {
-            sound = new Audio(`sounds/${soundName}.mp3`);
-            sound.volume = volume;
-            sound.setAttribute('playsinline', 'true');
-            if (state.isTelegramWebApp) {
-                sound.setAttribute('muted', 'false');
-            }
-        } catch (e) {
-            console.warn(`Не удалось создать звук ${soundName}:`, e);
-            return false;
-        }
-    }
-    
-    try {
-        // Всегда сбрасываем время
-        sound.currentTime = 0;
-        sound.volume = volume;
-        
-        if (state.isSafari || state.isIOS || state.isTelegramWebApp) {
-            sound.setAttribute('playsinline', 'true');
-            sound.setAttribute('webkit-playsinline', 'true');
-            sound.muted = false;
-        }
-        
-        // Пробуем воспроизвести
-        sound.play().then(() => {
-            console.log(`✓ ${soundName} воспроизведен успешно`);
-        }).catch(error => {
-            console.warn(`✗ ${soundName} ошибка воспроизведения:`, error.name);
-        });
-        
-        return true;
-    } catch (error) {
-        console.warn(`Исключение при воспроизведении ${soundName}:`, error);
-        return false;
-    }
-}
-
-// ИСПРАВЛЕНИЕ: Специальные функции для проблемных звуков
-
-// Для repeat (рестарт)
-function playRepeatSound() {
-    console.log('playRepeatSound вызван');
-    // Одна надежная попытка
-    playSoundReliable('repeat', state.volumes.repeat);
-}
-
-// Для change (result)
-function playChangeSound() {
-    console.log('playChangeSound вызван');
-    // Одна надежная попытка
-    playSoundReliable('change', state.volumes.change);
-}
-
-// Для start
-function playStartSound() {
-    console.log('playStartSound вызван');
-    // Одна надежная попытка
-    playSoundReliable('start', state.volumes.start);
-}
-
-// Улучшенная функция для choose
-function playChooseSound() {
-    console.log('playChooseSound вызван');
-    
-    // Сначала пробуем простой способ
-    playSoundReliable('choose', state.volumes.choose);
-    
-    return true;
-}
-
-// Улучшенная функция для timer с гарантированным воспроизведением
-function playTimerSound(number) {
-    if (number < 0) return;
-    
-    console.log(`playTimerSound ${number} вызван`);
-    
-    // Одна надежная попытка
-    playSoundReliable('timer', state.volumes.timer);
+    }, 2000);
 }
 
 // Принудительная активация аудио
 function ensureAudio() {
-    console.log('ensureAudio вызван');
-    
     if (!state.audioUnlocked) {
-        unlockAudioSystem().then(() => {
-            console.log('✓ Аудио система разблокирована');
-        });
+        setupAudioUnlock();
     }
-}
-
-// ИСПРАВЛЕНИЕ: Функции для обработки касаний
-function setupTouchHandlers() {
-    console.log('Настройка обработчиков касаний...');
-    
-    // Обработчики для всех кнопок
-    const buttons = [elements.startBtn, elements.selectBtn, elements.resultAgainBtn];
-    
-    buttons.forEach(button => {
-        if (!button) return;
-        
-        // Touch start - запоминаем, что касание началось на кнопке
-        button.addEventListener('touchstart', function(e) {
-            state.touchStartedOnButton = true;
-            state.currentTouchButton = this;
-            this.style.transform = 'scale(0.97)';
-            e.preventDefault();
-        }, { passive: false });
-        
-        // Touch move - проверяем, находится ли палец еще на кнопке
-        button.addEventListener('touchmove', function(e) {
-            if (!state.touchStartedOnButton) return;
-            
-            const touch = e.touches[0];
-            const rect = this.getBoundingClientRect();
-            const isStillOnButton = (
-                touch.clientX >= rect.left &&
-                touch.clientX <= rect.right &&
-                touch.clientY >= rect.top &&
-                touch.clientY <= rect.bottom
-            );
-            
-            if (!isStillOnButton) {
-                // Палец ушел с кнопки
-                state.touchStartedOnButton = false;
-                this.style.transform = '';
-            }
-        }, { passive: true });
-        
-        // Touch end - срабатывает только если палец все еще на кнопке
-        button.addEventListener('touchend', function(e) {
-            if (state.touchStartedOnButton && state.currentTouchButton === this) {
-                // Касание завершилось на той же кнопке
-                this.style.transform = '';
-                
-                // Вызываем соответствующую функцию
-                if (this === elements.startBtn) {
-                    handleStartButton();
-                } else if (this === elements.selectBtn) {
-                    handleSelectButton();
-                } else if (this === elements.resultAgainBtn) {
-                    handleResetButton();
-                }
-            }
-            
-            // Сбрасываем состояние
-            state.touchStartedOnButton = false;
-            state.currentTouchButton = null;
-            this.style.transform = '';
-            e.preventDefault();
-        }, { passive: false });
-        
-        // Touch cancel - сбрасываем состояние
-        button.addEventListener('touchcancel', function() {
-            state.touchStartedOnButton = false;
-            state.currentTouchButton = null;
-            this.style.transform = '';
-        }, { passive: true });
-    });
-    
-    // ИСПРАВЛЕНИЕ: Также настраиваем обработчики кликов для десктопов
-    // Используем прямые вызовы, а не ссылки на функции
-    elements.startBtn.addEventListener('click', function() {
-        handleStartButton();
-    });
-    
-    elements.selectBtn.addEventListener('click', function() {
-        handleSelectButton();
-    });
-    
-    elements.resultAgainBtn.addEventListener('click', function() {
-        handleResetButton();
-    });
-}
-
-// Обработчики для кнопок (вынесены в отдельные функции)
-function handleStartButton() {
-    if (state.startBtnLock) return;
-    
-    ensureAudio();
-    startGame();
-}
-
-function handleSelectButton() {
-    ensureAudio();
-    select();
-}
-
-function handleResetButton() {
-    ensureAudio();
-    reset();
 }
 
 // ============================
@@ -885,7 +468,7 @@ function updateLoadingUI() {
                     elements.startBtn.style.transition = '';
                 }, 300);
             }, 50);
-        }, 350); // Ждем завершения анимации текста
+        }, 350);
         
         // Запускаем idle анимацию если мы в режиме ожидания
         if (state.gamePhase === 'idle') {
@@ -977,6 +560,95 @@ function render(container, data) {
     container.appendChild(fragment);
 }
 
+// ИСПРАВЛЕНИЕ: Функции для обработки касаний
+function setupTouchHandlers() {
+    console.log('Настройка обработчиков касаний...');
+    
+    // Обработчики для всех кнопок
+    const buttons = [elements.startBtn, elements.selectBtn, elements.resultAgainBtn];
+    
+    buttons.forEach(button => {
+        if (!button) return;
+        
+        // Touch start
+        button.addEventListener('touchstart', function(e) {
+            state.touchStartedOnButton = true;
+            state.currentTouchButton = this;
+            this.style.transform = 'scale(0.97)';
+            e.preventDefault();
+        }, { passive: false });
+        
+        // Touch move
+        button.addEventListener('touchmove', function(e) {
+            if (!state.touchStartedOnButton) return;
+            
+            const touch = e.touches[0];
+            const rect = this.getBoundingClientRect();
+            const isStillOnButton = (
+                touch.clientX >= rect.left &&
+                touch.clientX <= rect.right &&
+                touch.clientY >= rect.top &&
+                touch.clientY <= rect.bottom
+            );
+            
+            if (!isStillOnButton) {
+                state.touchStartedOnButton = false;
+                this.style.transform = '';
+            }
+        }, { passive: true });
+        
+        // Touch end
+        button.addEventListener('touchend', function(e) {
+            if (state.touchStartedOnButton && state.currentTouchButton === this) {
+                this.style.transform = '';
+                
+                if (this === elements.startBtn) {
+                    handleStartButton();
+                } else if (this === elements.selectBtn) {
+                    handleSelectButton();
+                } else if (this === elements.resultAgainBtn) {
+                    handleResetButton();
+                }
+            }
+            
+            state.touchStartedOnButton = false;
+            state.currentTouchButton = null;
+            this.style.transform = '';
+            e.preventDefault();
+        }, { passive: false });
+        
+        // Touch cancel
+        button.addEventListener('touchcancel', function() {
+            state.touchStartedOnButton = false;
+            state.currentTouchButton = null;
+            this.style.transform = '';
+        }, { passive: true });
+    });
+    
+    // Обработчики кликов
+    elements.startBtn.addEventListener('click', handleStartButton);
+    elements.selectBtn.addEventListener('click', handleSelectButton);
+    elements.resultAgainBtn.addEventListener('click', handleResetButton);
+}
+
+// Обработчики для кнопок
+function handleStartButton() {
+    if (state.startBtnLock) return;
+    
+    ensureAudio();
+    startGame();
+}
+
+function handleSelectButton() {
+    ensureAudio();
+    select();
+}
+
+function handleResetButton() {
+    ensureAudio();
+    reset();
+}
+
 // Запуск анимации в режиме ожидания
 function startIdle() {
     state.gamePhase = 'idle';
@@ -989,17 +661,15 @@ function startIdle() {
     
     createRandomOrder();
     
-    // ИСПРАВЛЕНИЕ: Проверяем загружены ли изображения
     if (!state.imagesLoaded) {
         updateLoadingUI();
         return;
     }
     
-    // Если изображения загружены, продолжаем как обычно
     startIdleAnimation();
 }
 
-// ИСПРАВЛЕНИЕ: Отдельная функция для анимации idle
+// Отдельная функция для анимации idle
 function startIdleAnimation() {
     let instructionText;
     if (state.lastResult === null) {
@@ -1012,7 +682,6 @@ function startIdleAnimation() {
         instructionText = "Начнём сначала?";
     }
     
-    // ИСПРАВЛЕНИЕ: Плавная смена текста
     setInstructionText(instructionText);
     
     state.parts.forEach(p => {
@@ -1084,7 +753,6 @@ function animateTimerChange(timerNumber) {
         timer.innerHTML = '';
         timer.appendChild(digitSpan);
         
-        // Проигрываем звук таймера
         playTimerSound(timerNumber);
         
         setTimeout(() => {
@@ -1108,12 +776,10 @@ function startGame() {
     state.gamePhase = 'creating';
     state.changeSoundPlayed = false;
     
-    // Воспроизводим звук начала игры
     playStartSound();
     
     stopIdle();
     
-    // ИСПРАВЛЕНИЕ: Плавная смена текста
     setInstructionText("Создаём персонажа...");
     
     hideButtonWithAnimation(elements.startBtn);
@@ -1139,7 +805,6 @@ function startGame() {
             render(elements.characterDisplay, temp);
             duration += 50;
             
-            // Используем приоритетный звук для change (result.mp3)
             if (!state.changeSoundPlayed) {
                 playChangeSound();
                 state.changeSoundPlayed = true;
@@ -1182,7 +847,6 @@ function finalizeTarget() {
     render(elements.characterDisplay, state.target);
     
     setTimeout(() => {
-        // ИСПРАВЛЕНИЕ: Плавная смена текста
         setInstructionText("Запомни персонажа");
         
         let timeLeft = getMemorizeTime();
@@ -1223,7 +887,6 @@ function startSelecting() {
     state.isFirstChangeInCycle = true;
     state.canPressSpace = false;
 
-    // ИСПРАВЛЕНИЕ: Плавная смена текста
     setInstructionText(`Выбери ${getLabel(state.parts[0])}`);
     
     setTimeout(() => {
@@ -1243,7 +906,6 @@ function nextCycle() {
         state.selection[type] = getRandomOrderItem(type, 0);
     }
     
-    // ИСПРАВЛЕНИЕ: Плавная смена текста
     setTimeout(() => {
         setInstructionText(`Выбери ${getLabel(type)}`);
         
@@ -1302,7 +964,6 @@ function select() {
         return false;
     }
     
-    // Воспроизведение звука выбора
     playChooseSound();
     
     state.canSelect = false;
@@ -1388,11 +1049,11 @@ function finish() {
         
         // Воспроизводим звуки результатов
         if (p === 100) {
-            playSoundReliable('victory', state.volumes.victory);
+            playSound('victory');
         } else if (p >= 75) {
-            playSoundReliable('vic', state.volumes.vic);
+            playSound('vic');
         } else {
-            playSoundReliable('loss', state.volumes.loss);
+            playSound('loss');
         }
         
         if (tg && tg.sendData) {
@@ -1411,7 +1072,6 @@ function finish() {
 function reset() {
     if (state.resetBtnLock || state.isBusy) return;
     
-    // Используем специальную функцию для repeat звука
     playRepeatSound();
     
     state.resetBtnLock = true;
@@ -1537,15 +1197,15 @@ window.onload = async () => {
     console.log('Telegram Web App:', state.isTelegramWebApp ? 'Да' : 'Нет');
     
     try {
-        // ИСПРАВЛЕНИЕ: Сначала показываем загрузку
+        // Сначала показываем загрузку
         setInstructionText("Загрузка...", true);
         elements.startBtn.classList.add('hidden');
         elements.startBtn.disabled = true;
         elements.startBtn.style.opacity = '0.5';
         elements.startBtn.style.pointerEvents = 'none';
         
-        // Инициализируем аудио элементы
-        initAudioElements();
+        // Инициализируем систему звуков ПЕРВЫМ ДЕЛОМ
+        initAudioSystem();
         
         // Загружаем изображения
         await loadImages();
@@ -1566,33 +1226,10 @@ window.onload = async () => {
         startIdle();
         console.log('✓ Игра запущена в режиме ожидания');
         
-        // Агрессивная разблокировка аудио
-        const unlockOnAnyInteraction = () => {
-            if (!state.audioUnlocked) {
-                console.log('Обнаружено взаимодействие, разблокируем аудио');
-                unlockAudioSystem();
-            }
-        };
-        
-        // Обработчики для всех типов взаимодействий
-        const events = ['click', 'touchstart', 'mousedown', 'pointerdown', 'keydown'];
-        events.forEach(event => {
-            document.addEventListener(event, unlockOnAnyInteraction, { once: true });
-        });
-        
-        // Автоматическая попытка разблокировки через 1 секунду
-        setTimeout(() => {
-            if (!state.audioUnlocked) {
-                console.log('Автоматическая разблокировка аудио');
-                unlockAudioSystem();
-            }
-        }, 1000);
-        
         console.log('=== ИГРА УСПЕШНО ЗАГРУЖЕНА ===');
         
     } catch (error) {
         console.error('Ошибка загрузки игры:', error);
-        // В случае ошибки все равно пытаемся запустить игру
         updateLoadingUI();
         startIdle();
     }
