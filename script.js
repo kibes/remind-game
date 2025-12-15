@@ -33,19 +33,18 @@ const state = {
     soundsLoaded: false,
     audioInitialized: false,
     userInteracted: false,
-    debugMode: true, // Включаем отладку чтобы видеть что происходит
+    debugMode: true,
     timerSounds: [],
     canPressSpace: true,
     resultScreenVisible: false,
     chooseSoundInstances: [],
     changeSoundPlayed: false,
     startSoundPlayed: false,
-    // Упрощаем: убираем сложную Web Audio логику
-    isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
-    // Убираем Web Audio API - возвращаемся к простому подходу
-    audioElements: {}, // Храним аудио элементы отдельно для быстрого доступа
-    soundBuffers: {}, // Простые предзагруженные звуки
-    lastSoundPlayTime: 0 // Время последнего звука
+    // Новые флаги для HTTPS/серверных проблем
+    isHttps: window.location.protocol === 'https:',
+    audioUnlocked: false, // Флаг разблокировки аудио
+    soundElements: {}, // Храним аудио элементы отдельно
+    soundPromises: {} // Промисы для загрузки звуков
 };
 
 // Ссылки на DOM элементы
@@ -67,7 +66,7 @@ const elements = {
     resultPlayer: document.getElementById('result-player')
 };
 
-// Объект для хранения звуков - ВОЗВРАЩАЕМ ВСЕ ЗВУКИ
+// Объект для хранения звуков
 const audio = {
     start: null,
     choose: null,
@@ -80,34 +79,82 @@ const audio = {
     loss: null
 };
 
-// ПРОСТАЯ функция создания аудио элемента для мобильных
-function createAudioElement(src, volume = 1.0, preload = true) {
-    try {
-        const audioElement = new Audio();
-        
-        // Важные настройки для мобильных
-        audioElement.preload = preload ? 'auto' : 'none';
-        audioElement.src = src;
-        audioElement.volume = Math.max(0.1, Math.min(1, volume)); // Минимум 0.1 чтобы было слышно
-        audioElement.load(); // Принудительная загрузка
-        
-        // Сохраняем элемент для быстрого доступа
-        const soundName = getSoundNameFromSrc(src);
-        if (soundName) {
-            state.audioElements[soundName] = audioElement;
+// Создаем и загружаем аудио элемент С ПРАВИЛЬНЫМИ НАСТРОЙКАМИ для HTTPS
+function createAndLoadAudio(src, soundName) {
+    return new Promise((resolve) => {
+        try {
+            console.log(`Создание аудио элемента для: ${soundName}`);
+            
+            const audioElement = new Audio();
+            
+            // КРИТИЧЕСКИ ВАЖНО для HTTPS:
+            // 1. Не устанавливаем src сразу
+            // 2. Не вызываем load() до user interaction
+            // 3. Используем относительный путь
+            
+            // Настраиваем элемент
+            audioElement.preload = 'none'; // Меняем на 'none' для HTTPS!
+            audioElement.controls = false;
+            
+            // Сохраняем путь, но не устанавливаем src
+            audioElement.dataset.src = src;
+            audioElement.dataset.name = soundName;
+            
+            // Сохраняем в разных местах для доступа
+            state.soundElements[soundName] = audioElement;
+            audio[soundName] = audioElement;
+            
+            console.log(`Аудио элемент ${soundName} создан (ожидает загрузки)`);
+            resolve(audioElement);
+            
+        } catch (error) {
+            console.warn(`Ошибка создания аудио элемента ${soundName}:`, error);
+            resolve(null);
         }
-        
-        return audioElement;
-    } catch (error) {
-        console.warn('Не удалось создать аудио элемент:', src, error);
-        return null;
-    }
+    });
 }
 
-// Получение имени звука из src
-function getSoundNameFromSrc(src) {
-    const matches = src.match(/\/([^\/]+)\.mp3$/);
-    return matches ? matches[1] : null;
+// Функция ЗАГРУЗКИ аудио (только после user interaction!)
+function loadAudioElement(soundName) {
+    const audioElement = state.soundElements[soundName];
+    if (!audioElement || audioElement.src) {
+        return Promise.resolve(); // Уже загружен
+    }
+    
+    return new Promise((resolve) => {
+        try {
+            const src = audioElement.dataset.src;
+            console.log(`Загрузка аудио: ${soundName} из ${src}`);
+            
+            // Устанавливаем src и загружаем ТОЛЬКО СЕЙЧАС
+            audioElement.src = src;
+            
+            // События загрузки
+            const onCanPlay = () => {
+                console.log(`✓ Аудио ${soundName} готово к воспроизведению`);
+                audioElement.removeEventListener('canplay', onCanPlay);
+                audioElement.removeEventListener('error', onError);
+                resolve(true);
+            };
+            
+            const onError = (e) => {
+                console.warn(`✗ Ошибка загрузки аудио ${soundName}:`, e);
+                audioElement.removeEventListener('canplay', onCanPlay);
+                audioElement.removeEventListener('error', onError);
+                resolve(false);
+            };
+            
+            audioElement.addEventListener('canplay', onCanPlay, { once: true });
+            audioElement.addEventListener('error', onError, { once: true });
+            
+            // Начинаем загрузку
+            audioElement.load();
+            
+        } catch (error) {
+            console.warn(`Ошибка при загрузке ${soundName}:`, error);
+            resolve(false);
+        }
+    });
 }
 
 // Создаем несколько экземпляров для звука choose
@@ -116,14 +163,15 @@ function createChooseSoundInstances() {
     
     // Создаем 5 экземпляров для звука choose
     for (let i = 0; i < 5; i++) {
-        const chooseSound = createAudioElement('sounds/choose.mp3', 1.0);
-        if (chooseSound) {
-            state.chooseSoundInstances.push({
-                sound: chooseSound,
-                isPlaying: false,
-                lastPlayTime: 0
-            });
-        }
+        createAndLoadAudio('sounds/choose.mp3', `choose_${i}`).then(chooseSound => {
+            if (chooseSound) {
+                state.chooseSoundInstances.push({
+                    sound: chooseSound,
+                    isPlaying: false,
+                    lastPlayTime: 0
+                });
+            }
+        });
     }
 }
 
@@ -132,246 +180,271 @@ function createTimerSounds() {
     state.timerSounds = [];
     
     for (let i = 0; i < 6; i++) {
-        const timerSound = createAudioElement('sounds/timer.mp3', 1.0);
-        if (timerSound) {
-            state.timerSounds.push({
-                sound: timerSound,
-                isPlaying: false,
-                lastPlayTime: 0
-            });
-        }
+        createAndLoadAudio('sounds/timer.mp3', `timer_${i}`).then(timerSound => {
+            if (timerSound) {
+                state.timerSounds.push({
+                    sound: timerSound,
+                    isPlaying: false,
+                    lastPlayTime: 0
+                });
+            }
+        });
     }
 }
 
-// ПРЕДЗАГРУЗКА ВСЕХ ЗВУКОВ СРАЗУ (важно для мобильных)
-function preloadAllSounds() {
-    console.log('Начинаем предзагрузку всех звуков...');
+// Инициализация ВСЕХ аудио элементов (без загрузки)
+function initAudioElements() {
+    console.log('Инициализация всех аудио элементов...');
     
-    const soundsToPreload = [
-        { name: 'start', src: 'sounds/start.mp3', volume: 1.0 },
-        { name: 'choose', src: 'sounds/choose.mp3', volume: 1.0 },
-        { name: 'repeat', src: 'sounds/repeat.mp3', volume: 1.0 },
-        { name: 'timer', src: 'sounds/timer.mp3', volume: 1.0 },
-        { name: 'change', src: 'sounds/result.mp3', volume: 1.0 }, // Это result.mp3
-        { name: 'victory', src: 'sounds/victory.mp3', volume: 1.0 },
-        { name: 'vic', src: 'sounds/vic.mp3', volume: 1.0 },
-        { name: 'loss', src: 'sounds/loss.mp3', volume: 1.0 }
+    // Создаем промисы для всех звуков
+    const soundPromises = [
+        createAndLoadAudio('sounds/start.mp3', 'start'),
+        createAndLoadAudio('sounds/choose.mp3', 'choose'),
+        createAndLoadAudio('sounds/repeat.mp3', 'repeat'),
+        createAndLoadAudio('sounds/timer.mp3', 'timer'),
+        createAndLoadAudio('sounds/timer.mp3', 'timerEnd'),
+        createAndLoadAudio('sounds/result.mp3', 'change'), // Это result.mp3
+        createAndLoadAudio('sounds/victory.mp3', 'victory'),
+        createAndLoadAudio('sounds/vic.mp3', 'vic'),
+        createAndLoadAudio('sounds/loss.mp3', 'loss')
     ];
     
-    // Создаем простые аудио элементы для предзагрузки
-    soundsToPreload.forEach(sound => {
-        try {
-            const audioElement = new Audio();
-            audioElement.preload = 'auto';
-            audioElement.src = sound.src;
-            audioElement.volume = sound.volume;
-            
-            // Сохраняем в буфер для быстрого доступа
-            state.soundBuffers[sound.name] = {
-                src: sound.src,
-                volume: sound.volume,
-                element: audioElement
-            };
-            
-            // Начинаем загрузку
-            audioElement.load();
-            
-            // Пытаемся воспроизвести короткий тихий звук чтобы "разбудить" аудио на мобильных
-            if (state.isMobile) {
-                setTimeout(() => {
-                    try {
-                        audioElement.volume = 0.01; // Почти беззвучно
-                        audioElement.play().then(() => {
-                            audioElement.pause();
-                            audioElement.currentTime = 0;
-                            audioElement.volume = sound.volume;
-                        }).catch(() => {
-                            // Игнорируем ошибки тихого воспроизведения
-                        });
-                    } catch (e) {
-                        // Игнорируем ошибки
-                    }
-                }, 1000);
-            }
-            
-        } catch (error) {
-            console.warn(`Ошибка предзагрузки звука ${sound.name}:`, error);
+    Promise.all(soundPromises).then(() => {
+        state.soundsLoaded = true;
+        console.log('✓ Все аудио элементы созданы (ожидают загрузки)');
+        
+        // Создаем экземпляры для choose и timer
+        createChooseSoundInstances();
+        createTimerSounds();
+        
+        // Загружаем КРИТИЧЕСКИ ВАЖНЫЕ звуки СРАЗУ (те, что работали)
+        if (state.audioUnlocked) {
+            loadCriticalSounds();
         }
     });
-    
-    console.log('Предзагрузка звуков запущена');
 }
 
-// ОСНОВНАЯ функция воспроизведения звука (работает на всех устройствах)
+// Загружаем критические звуки которые уже работали
+function loadCriticalSounds() {
+    console.log('Загрузка критических звуков...');
+    
+    // Звуки, которые уже работали
+    const criticalSounds = ['timer', 'choose'];
+    
+    criticalSounds.forEach(soundName => {
+        if (state.soundElements[soundName]) {
+            loadAudioElement(soundName);
+        }
+    });
+}
+
+// РАЗБЛОКИРОВКА аудио системы (после user interaction)
+function unlockAudioSystem() {
+    if (state.audioUnlocked) {
+        console.log('Аудио уже разблокировано');
+        return Promise.resolve();
+    }
+    
+    console.log('=== РАЗБЛОКИРОВКА АУДИО СИСТЕМЫ ===');
+    console.log('HTTPS:', state.isHttps);
+    console.log('User interacted:', state.userInteracted);
+    
+    return new Promise((resolve) => {
+        state.audioUnlocked = true;
+        state.userInteracted = true;
+        
+        // Загружаем ВСЕ звуки после user interaction
+        const loadPromises = [];
+        
+        for (const soundName in state.soundElements) {
+            if (state.soundElements[soundName]) {
+                loadPromises.push(loadAudioElement(soundName));
+            }
+        }
+        
+        Promise.all(loadPromises).then(() => {
+            console.log('✓ Все звуки загружены и готовы');
+            state.audioInitialized = true;
+            resolve(true);
+        });
+    });
+}
+
+// Улучшенная функция воспроизведения звука для HTTPS
 function playSound(soundName, retryCount = 0) {
-    if (!state.audioEnabled) {
-        console.log('Аудио отключено, пропускаем:', soundName);
+    // Если аудио не разблокировано, пробуем разблокировать
+    if (!state.audioUnlocked) {
+        console.log(`Аудио заблокировано, пытаемся разблокировать для ${soundName}`);
+        unlockAudioSystem().then(() => {
+            // Пробуем еще раз после разблокировки
+            setTimeout(() => playSound(soundName, retryCount), 100);
+        });
         return false;
     }
     
-    if (!state.audioInitialized) {
-        console.log('Аудио не инициализировано, пропускаем:', soundName);
-        return false;
-    }
-    
-    const maxRetries = state.isMobile ? 2 : 0; // Больше попыток для мобильных
+    const maxRetries = 2;
     const now = Date.now();
     
-    // Проверяем частоту воспроизведения (не чаще чем раз в 50мс для одного звука)
-    if (now - state.lastSoundPlayTime < 50 && retryCount === 0) {
-        setTimeout(() => playSound(soundName), 50);
+    console.log(`Попытка воспроизвести: ${soundName} (попытка ${retryCount + 1})`);
+    
+    // Получаем аудио элемент
+    const sound = audio[soundName] || state.soundElements[soundName];
+    
+    if (!sound) {
+        console.warn(`Аудио элемент не найден: ${soundName}`);
+        
+        // Пробуем создать на лету для критических звуков
+        if (retryCount === 0) {
+            createAndLoadAudio(`sounds/${soundName}.mp3`, soundName).then(() => {
+                setTimeout(() => playSound(soundName, retryCount + 1), 100);
+            });
+        }
         return false;
     }
     
-    console.log(`Пробуем воспроизвести звук: ${soundName}, попытка: ${retryCount + 1}`);
-    
-    // Сначала пробуем основной аудио элемент
-    const sound = audio[soundName];
-    if (sound) {
-        try {
-            // Всегда сбрасываем время воспроизведения
-            sound.currentTime = 0;
-            
-            // Устанавливаем громкость (важно для мобильных)
-            sound.volume = state.isMobile ? 1.0 : (sound.volume || 1.0);
-            
-            // Пробуем воспроизвести
-            const playPromise = sound.play();
-            
-            if (playPromise !== undefined) {
-                return playPromise.then(() => {
-                    console.log(`✓ Звук ${soundName} успешно воспроизведен`);
-                    state.lastSoundPlayTime = now;
-                    return true;
-                }).catch(error => {
-                    console.warn(`✗ Не удалось воспроизвести ${soundName}:`, error.message);
-                    
-                    // Для мобильных: пробуем еще раз через небольшой промежуток
-                    if (retryCount < maxRetries) {
-                        console.log(`Повторная попытка ${retryCount + 1} для ${soundName}`);
-                        setTimeout(() => {
-                            playSound(soundName, retryCount + 1);
-                        }, 100 * (retryCount + 1));
-                        return false;
-                    }
-                    
-                    // Создаем новый элемент и пробуем через него
-                    try {
-                        const newSound = new Audio(sound.src);
-                        newSound.volume = sound.volume;
-                        newSound.play().catch(() => {});
-                        state.lastSoundPlayTime = now;
-                        return true;
-                    } catch (e) {
-                        console.warn(`Резервное воспроизведение ${soundName} не удалось:`, e);
-                        return false;
-                    }
-                });
-            } else {
-                // Для старых браузеров
-                try {
-                    sound.play();
-                    console.log(`✓ Звук ${soundName} воспроизведен (старый браузер)`);
-                    state.lastSoundPlayTime = now;
-                    return true;
-                } catch (e) {
-                    console.warn(`✗ ${soundName} не воспроизведен (старый браузер):`, e);
-                    return false;
-                }
-            }
-        } catch (error) {
-            console.warn(`Ошибка при попытке воспроизвести ${soundName}:`, error);
-            
-            // Пробуем использовать предзагруженный буфер
-            if (state.soundBuffers[soundName]) {
-                try {
-                    const bufferSound = new Audio(state.soundBuffers[soundName].src);
-                    bufferSound.volume = state.soundBuffers[soundName].volume;
-                    bufferSound.play().catch(() => {});
-                    state.lastSoundPlayTime = now;
-                    return true;
-                } catch (e) {
-                    // Игнорируем ошибки буфера
-                }
-            }
-            
+    try {
+        // Проверяем, загружен ли звук
+        if (!sound.src && sound.dataset.src) {
+            console.log(`Звук ${soundName} не загружен, загружаем...`);
+            loadAudioElement(soundName).then(() => {
+                setTimeout(() => playSound(soundName, retryCount + 1), 100);
+            });
             return false;
         }
-    } else {
-        console.warn(`Звук не найден: ${soundName}`);
+        
+        // Сбрасываем и воспроизводим
+        sound.currentTime = 0;
+        sound.volume = 1.0;
+        
+        const playPromise = sound.play();
+        
+        if (playPromise !== undefined) {
+            return playPromise.then(() => {
+                console.log(`✓ Звук ${soundName} воспроизведен успешно`);
+                return true;
+            }).catch(error => {
+                console.warn(`✗ Ошибка воспроизведения ${soundName}:`, error.message);
+                
+                // Особые случаи для HTTPS
+                if (error.name === 'NotAllowedError') {
+                    console.log('Аудио заблокировано браузером, требуется взаимодействие');
+                    return false;
+                }
+                
+                // Пробуем еще раз
+                if (retryCount < maxRetries) {
+                    setTimeout(() => playSound(soundName, retryCount + 1), 200 * (retryCount + 1));
+                } else {
+                    // Последняя попытка: создаем новый элемент
+                    try {
+                        const newSound = new Audio(sound.src);
+                        newSound.volume = 1.0;
+                        newSound.play().catch(() => {});
+                        console.log(`Звук ${soundName} воспроизведен через новый элемент`);
+                        return true;
+                    } catch (e) {
+                        console.warn(`Резервное воспроизведение не удалось:`, e);
+                        return false;
+                    }
+                }
+                return false;
+            });
+        } else {
+            // Старые браузеры
+            try {
+                sound.play();
+                console.log(`✓ Звук ${soundName} воспроизведен (старый браузер)`);
+                return true;
+            } catch (e) {
+                console.warn(`✗ ${soundName} не воспроизведен:`, e);
+                return false;
+            }
+        }
+    } catch (error) {
+        console.warn(`Исключение при воспроизведении ${soundName}:`, error);
         return false;
+    }
+}
+
+// Улучшенная функция для звука choose
+function playChooseSound() {
+    if (!state.audioUnlocked) {
+        unlockAudioSystem().then(() => {
+            setTimeout(playChooseSound, 100);
+        });
+        return false;
+    }
+    
+    // Сначала пробуем основной choose звук
+    if (playSound('choose')) {
+        return true;
+    }
+    
+    // Fallback к экземплярам
+    if (state.chooseSoundInstances.length > 0) {
+        const now = Date.now();
+        let availableInstance = null;
+        
+        for (const instance of state.chooseSoundInstances) {
+            if (!instance.isPlaying && (now - instance.lastPlayTime > 50)) {
+                availableInstance = instance;
+                break;
+            }
+        }
+        
+        if (!availableInstance) {
+            availableInstance = state.chooseSoundInstances.reduce((oldest, current) => {
+                return current.lastPlayTime < oldest.lastPlayTime ? current : oldest;
+            });
+        }
+        
+        try {
+            const sound = availableInstance.sound;
+            
+            // Проверяем загрузку
+            if (!sound.src && sound.dataset.src) {
+                loadAudioElement(availableInstance.sound.dataset.name).then(() => {
+                    playChooseSound();
+                });
+                return false;
+            }
+            
+            sound.currentTime = 0;
+            sound.volume = 1.0;
+            availableInstance.isPlaying = true;
+            availableInstance.lastPlayTime = now;
+            
+            sound.play().then(() => {
+                console.log('✓ Choose звук воспроизведен через экземпляр');
+            }).catch(() => {
+                availableInstance.isPlaying = false;
+            });
+            
+            setTimeout(() => {
+                availableInstance.isPlaying = false;
+            }, 300);
+            
+            return true;
+        } catch (error) {
+            console.warn('Ошибка choose экземпляра:', error);
+            availableInstance.isPlaying = false;
+            return false;
+        }
     }
     
     return false;
 }
 
-// Улучшенная функция для звука choose
-function playChooseSound() {
-    if (!state.audioEnabled) return false;
-    
-    console.log('Воспроизведение choose звука');
-    
-    // Пробуем обычный playSound сначала
-    if (playSound('choose')) {
-        return true;
-    }
-    
-    // Fallback к многоканальной системе
-    if (state.chooseSoundInstances.length === 0) {
-        return false;
-    }
-    
-    const now = Date.now();
-    let availableInstance = null;
-    
-    // Ищем доступный экземпляр
-    for (const instance of state.chooseSoundInstances) {
-        if (!instance.isPlaying && (now - instance.lastPlayTime > 50)) {
-            availableInstance = instance;
-            break;
-        }
-    }
-    
-    // Если все заняты, берем тот, который дольше всего не играл
-    if (!availableInstance) {
-        availableInstance = state.chooseSoundInstances.reduce((oldest, current) => {
-            return current.lastPlayTime < oldest.lastPlayTime ? current : oldest;
-        });
-    }
-    
-    try {
-        availableInstance.sound.currentTime = 0;
-        availableInstance.sound.volume = 1.0;
-        availableInstance.isPlaying = true;
-        availableInstance.lastPlayTime = now;
-        
-        availableInstance.sound.play().then(() => {
-            console.log('✓ Choose звук воспроизведен через экземпляр');
-            state.lastSoundPlayTime = now;
-        }).catch(() => {
-            availableInstance.isPlaying = false;
-        });
-        
-        // Автоматический сброс флага
-        setTimeout(() => {
-            availableInstance.isPlaying = false;
-        }, 300);
-        
-        return true;
-    } catch (error) {
-        console.warn('Ошибка воспроизведения choose через экземпляр:', error);
-        availableInstance.isPlaying = false;
-        return false;
-    }
-}
-
 // Улучшенная функция для звука таймера
 function playTimerSound(number) {
-    if (!state.audioEnabled || number < 0) return;
+    if (!state.audioUnlocked || number < 0) {
+        if (!state.audioUnlocked) {
+            unlockAudioSystem();
+        }
+        return;
+    }
     
-    console.log(`Воспроизведение таймера: ${number}`);
-    
-    // Пробуем обычный playSound
+    // Пробуем основной timer звук
     if (playSound('timer')) {
         return;
     }
@@ -384,17 +457,23 @@ function playTimerSound(number) {
             
             if (timerInstance) {
                 const now = Date.now();
+                const sound = timerInstance.sound;
+                
+                // Проверяем загрузку
+                if (!sound.src && sound.dataset.src) {
+                    loadAudioElement(timerInstance.sound.dataset.name);
+                    return;
+                }
                 
                 if (now - timerInstance.lastPlayTime < 50) return;
                 
-                timerInstance.sound.currentTime = 0;
-                timerInstance.sound.volume = 1.0;
+                sound.currentTime = 0;
+                sound.volume = 1.0;
                 timerInstance.isPlaying = true;
                 timerInstance.lastPlayTime = now;
                 
-                timerInstance.sound.play().then(() => {
-                    console.log(`✓ Таймер ${number} воспроизведен через экземпляр`);
-                    state.lastSoundPlayTime = now;
+                sound.play().then(() => {
+                    console.log(`✓ Таймер ${number} через экземпляр`);
                 }).catch(() => {
                     timerInstance.isPlaying = false;
                 });
@@ -407,126 +486,29 @@ function playTimerSound(number) {
             }
         }
         
-        // Последняя попытка: новый аудио элемент
-        const newTimerSound = new Audio('sounds/timer.mp3');
-        newTimerSound.volume = 1.0;
-        newTimerSound.play().catch(() => {});
-        state.lastSoundPlayTime = Date.now();
-        
-    } catch (error) {
-        console.warn('Ошибка воспроизведения таймера:', error);
-    }
-}
-
-// Инициализация всех звуков
-function initAudio() {
-    if (state.soundsLoaded) {
-        console.log('Звуки уже загружены');
-        return true;
-    }
-    
-    console.log('Инициализация всех звуков...');
-    
-    try {
-        // Создаем ВСЕ аудио элементы
-        audio.start = createAudioElement('sounds/start.mp3', 1.0);
-        audio.choose = createAudioElement('sounds/choose.mp3', 1.0);
-        audio.repeat = createAudioElement('sounds/repeat.mp3', 1.0);
-        audio.timer = createAudioElement('sounds/timer.mp3', 1.0);
-        audio.timerEnd = createAudioElement('sounds/timer.mp3', 1.0);
-        audio.change = createAudioElement('sounds/result.mp3', 1.0); // Это result.mp3
-        audio.victory = createAudioElement('sounds/victory.mp3', 1.0);
-        audio.vic = createAudioElement('sounds/vic.mp3', 1.0);
-        audio.loss = createAudioElement('sounds/loss.mp3', 1.0);
-        
-        // Настраиваем звуки таймера
-        if (audio.timer) audio.timer.playbackRate = 1.0;
-        if (audio.timerEnd) audio.timerEnd.playbackRate = 1.0;
-        
-        // Создаем звуки таймера
-        createTimerSounds();
-        
-        // Создаем экземпляры для choose
-        createChooseSoundInstances();
-        
-        state.soundsLoaded = true;
-        state.audioInitialized = true;
-        
-        console.log('✓ Все звуки успешно инициализированы');
-        
-        // На мобильных: "разогреваем" аудио систему
-        if (state.isMobile) {
-            setTimeout(() => {
-                console.log('Разогрев аудио системы для мобильных...');
-                // Пробуем тихое воспроизведение чтобы активировать аудио
-                try {
-                    const silentAudio = new Audio();
-                    silentAudio.volume = 0.001;
-                    silentAudio.play().then(() => {
-                        silentAudio.pause();
-                        console.log('✓ Аудио система активирована');
-                    }).catch(e => {
-                        console.log('Тихий звук не воспроизведен, но это нормально');
-                    });
-                } catch (e) {
-                    // Игнорируем ошибки разогрева
-                }
-            }, 1000);
+        // Последняя попытка
+        if (state.audioUnlocked) {
+            const newSound = new Audio('sounds/timer.mp3');
+            newSound.volume = 1.0;
+            newSound.play().catch(() => {});
         }
         
-        return true;
     } catch (error) {
-        console.error('Ошибка инициализации звуков:', error);
-        
-        // Пробуем создать хотя бы основные звуки
-        try {
-            audio.start = new Audio('sounds/start.mp3');
-            audio.choose = new Audio('sounds/choose.mp3');
-            audio.timer = new Audio('sounds/timer.mp3');
-            audio.change = new Audio('sounds/result.mp3');
-            
-            state.soundsLoaded = true;
-            state.audioInitialized = true;
-            console.log('✓ Основные звуки созданы (упрощенная инициализация)');
-            return true;
-        } catch (e) {
-            console.error('Не удалось создать даже основные звуки:', e);
-            return false;
-        }
+        console.warn('Ошибка таймера:', error);
     }
 }
 
 // Принудительная активация аудио
 function ensureAudio() {
-    console.log('ensureAudio вызван, userInteracted:', state.userInteracted);
+    console.log('ensureAudio вызван');
     
-    if (!state.userInteracted) {
-        state.userInteracted = true;
-        console.log('✓ Первое взаимодействие пользователя');
-        
-        // Инициализируем звуки
-        initAudio();
-        
-        // На мобильных: сразу пробуем проиграть тестовый звук
-        if (state.isMobile && state.audioInitialized) {
-            setTimeout(() => {
-                console.log('Тестирование аудио на мобильном...');
-                playSound('timer').then(success => {
-                    if (success) {
-                        console.log('✓ Тестовый звук воспроизведен успешно');
-                    } else {
-                        console.log('✗ Тестовый звук не воспроизведен');
-                    }
-                });
-            }, 300);
-        }
-    } else if (!state.soundsLoaded) {
-        console.log('Переинициализация звуков...');
-        initAudio();
-    }
+    // Всегда пробуем разблокировать
+    unlockAudioSystem().then(() => {
+        console.log('✓ Аудио система разблокирована');
+    });
 }
 
-// Остальные функции остаются в основном без изменений
+// Остальные функции остаются практически без изменений
 // ------------------------------------------------------------
 
 // Предзагрузка critical изображений
@@ -706,7 +688,7 @@ function animateTimerChange(timerNumber) {
     }
 }
 
-// Начало игры - ВОЗВРАЩАЕМ ВСЕ ЗВУКИ
+// Начало игры
 function startGame() {
     if (state.startBtnLock) return;
     
@@ -723,7 +705,6 @@ function startGame() {
     if (!state.startSoundPlayed) {
         state.startSoundPlayed = true;
         playSound('start');
-        console.log('Звук start.mp3 запущен');
     }
     
     stopIdle();
@@ -758,8 +739,7 @@ function startGame() {
             duration += 50;
             
             if (!state.changeSoundPlayed) {
-                playSound('change'); // Теперь это result.mp3
-                console.log('Звук change.mp3 (теперь result.mp3) запущен');
+                playSound('change');
                 state.changeSoundPlayed = true;
             }
             
@@ -924,7 +904,6 @@ function select() {
     }
     
     playChooseSound();
-    console.log('Звук choose.mp3 запущен');
     
     state.canSelect = false;
     state.canPressSpace = false;
@@ -952,7 +931,7 @@ function select() {
     return true;
 }
 
-// Завершение игры - ВОЗВРАЩАЕМ ВСЕ ЗВУКИ РЕЗУЛЬТАТОВ
+// Завершение игры
 function finish() {
     state.gamePhase = 'finished';
     state.isBusy = true;
@@ -1009,16 +988,13 @@ function finish() {
         state.resetBtnLock = false;
         state.isBusy = false;
         
-        // ВОЗВРАЩАЕМ ВСЕ ЗВУКИ РЕЗУЛЬТАТОВ
+        // Воспроизводим звуки результатов
         if (p === 100) {
             playSound('victory');
-            console.log('Звук victory.mp3 запущен');
         } else if (p >= 75) {
             playSound('vic');
-            console.log('Звук vic.mp3 запущен');
         } else {
             playSound('loss');
-            console.log('Звук loss.mp3 запущен');
         }
         
         if (tg && tg.sendData) {
@@ -1033,12 +1009,11 @@ function finish() {
     }, 400);
 }
 
-// Сброс игры - ВОЗВРАЩАЕМ ЗВУК repeat
+// Сброс игры
 function reset() {
     if (state.resetBtnLock || state.isBusy) return;
     
     playSound('repeat');
-    console.log('Звук repeat.mp3 запущен');
     
     state.resetBtnLock = true;
     state.canPressSpace = false;
@@ -1134,11 +1109,12 @@ window.addEventListener('keydown', function(e) {
     }
 });
 
-// Обработчики для мобильных
+// Обработчики для мобильных - ВАЖНО: разблокируем аудио
 document.addEventListener('touchstart', function(e) {
+    ensureAudio();
+    
     if (e.target.tagName === 'BUTTON') {
         e.target.style.transform = 'scale(0.97)';
-        ensureAudio();
     }
 }, { passive: true });
 
@@ -1157,6 +1133,7 @@ elements.startBtn.onclick = function() {
 };
 
 elements.selectBtn.onclick = function() {
+    ensureAudio();
     select();
 };
 
@@ -1189,11 +1166,12 @@ document.addEventListener('contextmenu', function(e) {
 // Инициализация игры
 window.onload = async () => {
     console.log('=== ИГРА ЗАГРУЖАЕТСЯ ===');
-    console.log('Мобильное устройство:', state.isMobile);
+    console.log('Протокол:', window.location.protocol);
+    console.log('HTTPS:', state.isHttps);
     
     try {
-        // Начинаем предзагрузку всех звуков СРАЗУ
-        preloadAllSounds();
+        // Создаем аудио элементы СРАЗУ (но не загружаем!)
+        initAudioElements();
         
         // Загружаем изображения
         await loadImages();
@@ -1206,104 +1184,38 @@ window.onload = async () => {
             console.log('✓ Telegram WebApp инициализирован');
         }
         
-        // Сразу создаем ВСЕ аудио элементы (не ждем user interaction)
-        console.log('Создание всех аудио элементов...');
-        
-        audio.start = new Audio('sounds/start.mp3');
-        audio.choose = new Audio('sounds/choose.mp3');
-        audio.repeat = new Audio('sounds/repeat.mp3');
-        audio.timer = new Audio('sounds/timer.mp3');
-        audio.timerEnd = new Audio('sounds/timer.mp3');
-        audio.change = new Audio('sounds/result.mp3');
-        audio.victory = new Audio('sounds/victory.mp3');
-        audio.vic = new Audio('sounds/vic.mp3');
-        audio.loss = new Audio('sounds/loss.mp3');
-        
-        // Настраиваем
-        audio.timer.volume = 1.0;
-        audio.timerEnd.volume = 1.0;
-        audio.timerEnd.playbackRate = 1.0;
-        
-        // Предзагружаем все звуки
-        Object.values(audio).forEach(sound => {
-            if (sound && typeof sound.load === 'function') {
-                try {
-                    sound.load();
-                } catch (e) {
-                    // Игнорируем ошибки загрузки
-                }
-            }
-        });
-        
-        // Создаем звуки таймера и choose
-        createTimerSounds();
-        createChooseSoundInstances();
-        
-        state.soundsLoaded = true;
-        state.audioInitialized = true;
-        
-        console.log('✓ Все аудио элементы созданы и предзагружены');
-        
         // Запускаем игру
         startIdle();
         console.log('✓ Игра запущена в режиме ожидания');
         
-        // Упрощенная активация аудио
-        const activateOnInteraction = () => {
-            if (!state.userInteracted) {
-                console.log('✓ Активация аудио по взаимодействию');
-                state.userInteracted = true;
-                
-                // На мобильных: пробуем "разбудить" аудио
-                if (state.isMobile) {
-                    setTimeout(() => {
-                        console.log('Пробуем разбудить аудио на мобильном...');
-                        // Тихий тестовый звук
-                        try {
-                            const testSound = new Audio('sounds/timer.mp3');
-                            testSound.volume = 0.01;
-                            testSound.play().then(() => {
-                                testSound.pause();
-                                console.log('✓ Аудио разбужено');
-                            }).catch(() => {
-                                console.log('Аудио не разбужено, но это нормально');
-                            });
-                        } catch (e) {
-                            // Игнорируем ошибки
-                        }
-                    }, 100);
-                }
+        // Агрессивная разблокировка аудио при ЛЮБОМ взаимодействии
+        const unlockOnAnyInteraction = () => {
+            if (!state.audioUnlocked) {
+                console.log('Обнаружено взаимодействие, разблокируем аудио...');
+                unlockAudioSystem();
             }
         };
         
-        // Вешаем обработчики
-        document.addEventListener('click', activateOnInteraction);
-        document.addEventListener('touchstart', activateOnInteraction);
-        document.addEventListener('keydown', activateOnInteraction);
+        // Много обработчиков для гарантированной разблокировки
+        document.addEventListener('click', unlockOnAnyInteraction);
+        document.addEventListener('touchstart', unlockOnAnyInteraction);
+        document.addEventListener('mousedown', unlockOnAnyInteraction);
+        document.addEventListener('keydown', unlockOnAnyInteraction);
+        document.addEventListener('pointerdown', unlockOnAnyInteraction);
         
-        // Обработчики для видимости страницы
-        document.addEventListener('visibilitychange', function() {
-            if (!document.hidden && state.isMobile && state.userInteracted) {
-                // При возвращении на страницу пробуем восстановить аудио
-                setTimeout(() => {
-                    if (audio.timer) {
-                        audio.timer.currentTime = 0;
-                    }
-                }, 100);
+        // Также пробуем разблокировать при загрузке (на случай если уже было взаимодействие)
+        setTimeout(() => {
+            if (!state.audioUnlocked) {
+                console.log('Пробуем разблокировать аудио автоматически...');
+                unlockAudioSystem();
             }
-        });
+        }, 1000);
         
         console.log('=== ИГРА УСПЕШНО ЗАГРУЖЕНА ===');
-        console.log('Аудио готово к воспроизведению');
+        console.log('Аудио элементы созданы, ожидают разблокировки');
         
     } catch (error) {
         console.error('Ошибка загрузки игры:', error);
         startIdle();
     }
 };
-
-// Экспортируем для отладки
-window.playSound = playSound;
-window.playTimerSound = playTimerSound;
-window.playChooseSound = playChooseSound;
-window.ensureAudio = ensureAudio;
