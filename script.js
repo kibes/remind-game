@@ -30,19 +30,17 @@ const state = {
     startBtnLock: false,
     resetBtnLock: false,
     userInteracted: false,
-    
-    // ИСПРАВЛЕНИЕ 1: Флаг готовности кнопки для пробела
     isButtonReady: false, 
 
     // Определение платформы
     isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream,
     isTelegramWebApp: window.Telegram && window.Telegram.WebApp,
 
-    // ИСПРАВЛЕНИЕ 3: Новая система аудио (Web Audio API)
+    // Аудио система
     audioContext: null,
     audioBuffers: {},
     soundsLoaded: false,
-    audioUnlocked: false, // Флаг разблокировки контекста на iOS
+    audioUnlocked: false,
     
     imagesLoaded: false
 };
@@ -66,6 +64,13 @@ const elements = {
     resultPlayer: document.getElementById('result-player')
 };
 
+// ИСПРАВЛЕНИЕ TWA: Принудительная изоляция слоев
+// Это лечит баг с просвечиванием слоев при анимации прозрачности на iOS/TWA
+if (elements.characterDisplay) {
+    elements.characterDisplay.style.isolation = 'isolate';
+    elements.characterDisplay.style.webkitIsolation = 'isolate';
+}
+
 function setInstructionText(text, immediate = false) {
     const instruction = elements.instruction;
     if (immediate) {
@@ -83,19 +88,19 @@ function setInstructionText(text, immediate = false) {
 }
 
 // ============================
-// НОВАЯ СИСТЕМА ЗВУКОВ (WEB AUDIO API)
+// AUDIO SYSTEM (Web Audio API)
 // ============================
-// Решает проблемы с задержками и пропажей звуков на iOS
 
 const AudioContext = window.AudioContext || window.webkitAudioContext;
 
 function initAudioSystem() {
     try {
         state.audioContext = new AudioContext();
-        console.log('AudioContext создан');
         loadAllSounds();
     } catch (e) {
         console.error('Web Audio API не поддерживается:', e);
+        // Даже если аудио сломалось, помечаем как загруженное, чтобы игра работала
+        state.soundsLoaded = true; 
     }
 }
 
@@ -105,7 +110,6 @@ async function loadSoundFile(name, url) {
         const arrayBuffer = await response.arrayBuffer();
         const audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
         state.audioBuffers[name] = audioBuffer;
-        console.log(`✓ Звук загружен: ${name}`);
     } catch (e) {
         console.error(`Ошибка загрузки звука ${name}:`, e);
     }
@@ -117,70 +121,57 @@ async function loadAllSounds() {
         'choose': 'sounds/choose.mp3',
         'repeat': 'sounds/repeat.mp3',
         'timer': 'sounds/timer.mp3',
-        'change': 'sounds/result.mp3', // Проверьте, верно ли название файла в папке
+        'change': 'sounds/result.mp3',
         'victory': 'sounds/victory.mp3',
         'vic': 'sounds/vic.mp3',
-        'loss': 'sounds/loss.mp3'
+        'loss': 'sounds/loss.mp3',
+        'next': 'sounds/next.mp3' // НОВЫЙ ЗВУК
     };
 
     const promises = Object.entries(sounds).map(([name, url]) => loadSoundFile(name, url));
     await Promise.all(promises);
     state.soundsLoaded = true;
-    console.log('✓ Все звуки загружены в память');
+    console.log('✓ Все звуки загружены');
+    // Вызываем проверку UI, так как звуки могли загрузиться последними
+    updateLoadingUI();
 }
 
-// Функция разблокировки аудио (критично для iOS)
 function unlockAudio() {
     if (!state.audioContext || state.audioUnlocked) return;
-
-    // Создаем и проигрываем тишину
+    
     const buffer = state.audioContext.createBuffer(1, 1, 22050);
     const source = state.audioContext.createBufferSource();
     source.buffer = buffer;
     source.connect(state.audioContext.destination);
-    
     if (source.start) source.start(0);
     else if (source.noteOn) source.noteOn(0);
 
-    // Возобновляем контекст
     if (state.audioContext.state === 'suspended') {
-        state.audioContext.resume().then(() => {
-            state.audioUnlocked = true;
-            console.log('AudioContext разблокирован (resume)');
-        });
-    } else {
-        state.audioUnlocked = true;
-        console.log('AudioContext разблокирован');
+        state.audioContext.resume();
     }
+    state.audioUnlocked = true;
 }
 
 function playSound(name) {
     if (!state.soundsLoaded || !state.audioContext || !state.audioBuffers[name]) return;
-
-    // Для iOS пытаемся возобновить контекст если он "уснул"
-    if (state.audioContext.state === 'suspended') {
-        state.audioContext.resume();
-    }
+    if (state.audioContext.state === 'suspended') state.audioContext.resume();
 
     const source = state.audioContext.createBufferSource();
     source.buffer = state.audioBuffers[name];
     source.connect(state.audioContext.destination);
-    
-    // Запуск звука без задержки
     source.start(0);
 }
 
-// Обертки для совместимости
 const playStartSound = () => playSound('start');
 const playChooseSound = () => playSound('choose');
 const playRepeatSound = () => playSound('repeat');
 const playChangeSound = () => playSound('change');
-// Таймеру теперь не нужны инстансы, WebAudio играет их "поверх" друг друга без лагов
+const playNextSound = () => playSound('next'); // Обертка для нового звука
 const playTimerSound = (num) => { if(num >= 0) playSound('timer'); }; 
 
 
 // ============================
-// ЛОГИКА ИГРЫ
+// GAME LOGIC
 // ============================
 
 function checkImagesLoaded() {
@@ -200,50 +191,57 @@ function checkImagesLoaded() {
     return { allLoaded, loadedCount, totalCount };
 }
 
+// ОБНОВЛЕНО: Учитывает и картинки, и звуки
 function updateLoadingUI() {
-    const loadStatus = checkImagesLoaded();
+    const imgStatus = checkImagesLoaded();
+    const everythingLoaded = imgStatus.allLoaded && state.soundsLoaded;
     
-    if (!loadStatus.allLoaded) {
-        const progressText = `Загрузка... ${loadStatus.loadedCount}/${loadStatus.totalCount}`;
+    if (!everythingLoaded) {
+        // Показываем прогресс
+        const progressText = `Загрузка... ${imgStatus.loadedCount}/${imgStatus.totalCount}`;
         if (elements.instruction.textContent !== progressText) {
             elements.instruction.textContent = progressText;
             elements.instruction.classList.add('show');
         }
         
+        // Гарантированно скрываем кнопку
         elements.startBtn.classList.add('hidden');
         elements.startBtn.disabled = true;
-        // Кнопка не готова
+        elements.startBtn.style.opacity = '0'; // Дополнительно прячем через opacity
         state.isButtonReady = false;
         
+        // Повторная проверка через 500мс
         setTimeout(updateLoadingUI, 500);
     } else {
-        state.imagesLoaded = true;
-        
-        let instructionText = "Начнём?";
-        elements.instruction.textContent = instructionText;
-        elements.instruction.classList.add('show');
+        // Если уже всё загружено, но мы еще не инициализировали фазу
+        if (!state.imagesLoaded) {
+            state.imagesLoaded = true;
             
-        setTimeout(() => {
+            // Смена текста
+            elements.instruction.textContent = "Начнём?";
+            elements.instruction.classList.add('show');
+            
+            // Анимация появления кнопки
             elements.startBtn.classList.remove('hidden');
+            // Сначала прозрачная
             elements.startBtn.style.opacity = '0';
-            elements.startBtn.style.transition = 'opacity 0.3s ease';
             
+            // Плавное появление
             setTimeout(() => {
+                elements.startBtn.style.transition = 'opacity 0.3s ease';
                 elements.startBtn.style.opacity = '1';
                 elements.startBtn.disabled = false;
                 elements.startBtn.style.pointerEvents = 'auto';
                 
-                // ИСПРАВЛЕНИЕ 1: Разрешаем пробел только когда кнопка полностью проявилась
                 setTimeout(() => {
                     elements.startBtn.style.transition = '';
                     state.isButtonReady = true; 
-                    console.log('Кнопка готова, можно жать пробел');
                 }, 300);
-            }, 50);
-        }, 350);
-        
-        if (state.gamePhase === 'idle') {
-            startIdleAnimation();
+            }, 100);
+            
+            if (state.gamePhase === 'idle') {
+                startIdleAnimation();
+            }
         }
     }
 }
@@ -310,7 +308,6 @@ function render(container, data) {
 function setupTouchHandlers() {
     const buttons = [elements.startBtn, elements.selectBtn, elements.resultAgainBtn];
     
-    // Глобальный слушатель для разблокировки аудио при первом тапе
     const globalUnlock = () => {
         unlockAudio();
         document.removeEventListener('touchstart', globalUnlock);
@@ -326,14 +323,13 @@ function setupTouchHandlers() {
             state.touchStartedOnButton = true;
             state.currentTouchButton = this;
             this.style.transform = 'scale(0.97)';
-            // Важно для iOS аудио: действие пользователя
             unlockAudio(); 
         }, { passive: true });
         
         button.addEventListener('touchend', function(e) {
             if (state.touchStartedOnButton && state.currentTouchButton === this) {
                 this.style.transform = '';
-                e.preventDefault(); // Предотвращаем двойной клик
+                e.preventDefault();
                 
                 if (this === elements.startBtn) handleStartButton();
                 else if (this === elements.selectBtn) handleSelectButton();
@@ -349,9 +345,8 @@ function setupTouchHandlers() {
         }, { passive: true });
     });
     
-    // Click fallback
     elements.startBtn.addEventListener('click', (e) => { 
-        if(e.detail === 0) return; // Игнорируем программные клики от touch
+        if(e.detail === 0) return;
         handleStartButton(); 
     });
     elements.selectBtn.addEventListener('click', (e) => { 
@@ -390,7 +385,8 @@ function startIdle() {
     
     createRandomOrder();
     
-    if (!state.imagesLoaded) {
+    // Если еще грузимся - выходим, UI обновит updateLoadingUI
+    if (!state.imagesLoaded || !state.soundsLoaded) {
         updateLoadingUI();
         return;
     }
@@ -398,8 +394,6 @@ function startIdle() {
 }
 
 function startIdleAnimation() {
-    // Текст устанавливается либо при загрузке, либо при сбросе
-    // Здесь мы просто убеждаемся, что он показан
     elements.instruction.classList.add('show');
     
     state.parts.forEach(p => {
@@ -411,7 +405,6 @@ function startIdleAnimation() {
     let lastTime = 0;
     const animateIdle = (timestamp) => {
         if (!state.idleInterval) return;
-        
         if (timestamp - lastTime > 1000) {
             lastTime = timestamp;
             const p = state.parts[Math.floor(Math.random() * state.parts.length)];
@@ -426,11 +419,8 @@ function startIdleAnimation() {
                 render(elements.characterDisplay, state.idleCharacter);
             }
         }
-        if (state.gamePhase === 'idle') {
-            requestAnimationFrame(animateIdle);
-        }
+        if (state.gamePhase === 'idle') requestAnimationFrame(animateIdle);
     };
-    
     if (state.idleInterval) cancelAnimationFrame(state.idleInterval);
     state.idleInterval = requestAnimationFrame(animateIdle);
 }
@@ -444,7 +434,6 @@ function stopIdle() {
 
 function hideButtonWithAnimation(button) {
     if (!button || button.classList.contains('hidden')) return;
-    
     button.style.transition = 'all 0.2s ease';
     button.style.opacity = '0';
     button.style.transform = 'scale(0.8)';
@@ -464,13 +453,9 @@ function animateTimerChange(timerNumber) {
         digitSpan.textContent = timer.textContent;
         timer.innerHTML = '';
         timer.appendChild(digitSpan);
-        
         playTimerSound(timerNumber);
-        
         setTimeout(() => {
-            if (digitSpan.parentNode === timer) {
-                digitSpan.classList.remove('changing');
-            }
+            if (digitSpan.parentNode === timer) digitSpan.classList.remove('changing');
         }, 300);
     }
 }
@@ -479,7 +464,7 @@ function startGame() {
     if (state.startBtnLock) return;
     
     state.startBtnLock = true;
-    state.isButtonReady = false; // Блокируем пробел
+    state.isButtonReady = false;
     
     if (elements.startBtn && !elements.startBtn.classList.contains('hidden')) {
         hideButtonWithAnimation(elements.startBtn);
@@ -493,17 +478,12 @@ function startGame() {
     stopIdle();
     setInstructionText("Создаём персонажа...");
     
-    if (state.fastCycle) {
-        cancelAnimationFrame(state.fastCycle);
-        state.fastCycle = null;
-    }
+    if (state.fastCycle) { cancelAnimationFrame(state.fastCycle); state.fastCycle = null; }
     
     let duration = 0;
     let lastTime = 0;
-    
     const animateCreation = (timestamp) => {
         if (!state.fastCycle) return;
-        
         if (timestamp - lastTime > 50) {
             lastTime = timestamp;
             const temp = {};
@@ -518,7 +498,6 @@ function startGame() {
                 playChangeSound();
                 state.changeSoundPlayed = true;
             }
-            
             if (duration >= 2000) {
                 cancelAnimationFrame(state.fastCycle);
                 state.fastCycle = null;
@@ -526,9 +505,7 @@ function startGame() {
                 return;
             }
         }
-        if (state.gamePhase === 'creating') {
-            state.fastCycle = requestAnimationFrame(animateCreation);
-        }
+        if (state.gamePhase === 'creating') state.fastCycle = requestAnimationFrame(animateCreation);
     };
     state.fastCycle = requestAnimationFrame(animateCreation);
 }
@@ -555,7 +532,6 @@ function finalizeTarget() {
         elements.timer.textContent = timeLeft;
         elements.timer.classList.add('show');
         state.isTimerActive = true;
-        
         setTimeout(() => animateTimerChange(timeLeft), 100);
         
         const t = setInterval(() => {
@@ -608,6 +584,9 @@ function nextCycle() {
         idx = (idx + 1) % state.partCounts[type];
         state.selection[type] = getRandomOrderItem(type, idx);
         render(elements.characterDisplay, state.selection);
+        
+        // НОВОЕ: Проигрываем звук next.mp3 при каждой смене предмета
+        playNextSound();
     };
     state.interval = setInterval(cycle, finalSpeed);
     setTimeout(() => { state.canPressSpace = true; }, 200);
@@ -656,13 +635,9 @@ function finish() {
         });
         const p = Math.round((m/4)*100);
         
-        if (p === 100) {
-            state.streak++; state.lastResult = 'win';
-        } else if (p < 75) {
-            state.streak = 0; state.lastResult = 'lose';
-        } else {
-            state.lastResult = 'almost';
-        }
+        if (p === 100) { state.streak++; state.lastResult = 'win'; }
+        else if (p < 75) { state.streak = 0; state.lastResult = 'lose'; }
+        else { state.lastResult = 'almost'; }
         
         if (state.streak > state.maxStreak) state.maxStreak = state.streak;
         
@@ -710,11 +685,8 @@ function reset() {
     elements.resultAgainBtn.disabled = true;
     
     state.round++;
-    
-    // ИСПРАВЛЕНИЕ 2: Меняем текст СРАЗУ, до анимации исчезновения
     elements.instruction.textContent = "Начнём?";
     elements.instruction.classList.remove('show');
-    // Сбрасываем lastResult, чтобы startIdleAnimation не перезаписал текст
     state.lastResult = null; 
     
     elements.resultScreen.classList.remove('show');
@@ -734,23 +706,16 @@ function reset() {
         elements.startBtn.disabled = false;
         elements.startBtn.style.pointerEvents = 'auto';
         
-        // Разрешаем пробел только после появления кнопки (таймаут такой же как при загрузке)
         state.isButtonReady = false;
-        setTimeout(() => {
-            state.isButtonReady = true;
-        }, 300);
+        setTimeout(() => { state.isButtonReady = true; }, 300);
         
         elements.resultAgainBtn.disabled = false;
-        
         elements.selectBtn.classList.remove('show');
         elements.selectBtn.classList.add('hidden');
-        
         elements.gameArea.classList.remove('hidden');
         updateStats();
         
-        setTimeout(() => {
-            startIdle();
-        }, 100);
+        setTimeout(startIdle, 100);
     }, 400);
 }
 
@@ -758,10 +723,7 @@ function updateStats() {
     const anim = (el, val) => {
         if (el.textContent != val) {
             el.classList.add('updating');
-            setTimeout(() => { 
-                el.textContent = val; 
-                el.classList.remove('updating'); 
-            }, 300);
+            setTimeout(() => { el.textContent = val; el.classList.remove('updating'); }, 300);
         }
     };
     anim(elements.round, state.round);
@@ -772,29 +734,20 @@ function updateStats() {
 window.addEventListener('keydown', function(e) {
     if (e.code === 'Space') {
         e.preventDefault();
-        
         if (state.isTimerActive || state.isBusy || state.gamePhase === 'memorizing' || state.gamePhase === 'creating') return;
         if (!state.canPressSpace) return;
-        
-        // ИСПРАВЛЕНИЕ 1: Блокировка пробела если кнопка не готова
         if (state.gamePhase === 'idle' && !state.isButtonReady) return;
-        
         if (state.gamePhase === 'finished' && !state.resultScreenVisible) return;
         if (state.gamePhase === 'selecting' && !state.canSelect) return;
         
         unlockAudio();
         
-        if (state.gamePhase === 'idle' && !state.startBtnLock) {
-            startGame();
-        } else if (state.gamePhase === 'selecting' && state.canSelect) {
-            select();
-        } else if (state.gamePhase === 'finished' && !state.resetBtnLock && state.resultScreenVisible) {
-            reset();
-        }
+        if (state.gamePhase === 'idle' && !state.startBtnLock) startGame();
+        else if (state.gamePhase === 'selecting' && state.canSelect) select();
+        else if (state.gamePhase === 'finished' && !state.resetBtnLock && state.resultScreenVisible) reset();
     }
 });
 
-// Утилиты
 document.addEventListener('touchend', function(e) {
     const now = Date.now();
     if (now - (window.lastTouchEnd || 0) < 300) e.preventDefault();
@@ -804,11 +757,14 @@ document.addEventListener('touchend', function(e) {
 document.addEventListener('selectstart', e => { e.preventDefault(); return false; });
 document.addEventListener('contextmenu', e => { e.preventDefault(); return false; });
 
-// Инициализация
 window.onload = async () => {
-    // Инициализация аудио (создание контекста)
-    initAudioSystem();
+    // Скрываем кнопку старта сразу при загрузке
+    if (elements.startBtn) {
+        elements.startBtn.classList.add('hidden');
+        elements.startBtn.disabled = true;
+    }
     
+    initAudioSystem();
     try {
         await loadImages();
         if (tg) tg.ready();
