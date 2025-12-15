@@ -54,7 +54,13 @@ const state = {
     // Флаг загрузки изображений
     imagesLoaded: false,
     // ИСПРАВЛЕНИЕ: Флаг для отслеживания нажатия пробела до появления кнопки
-    gameStartedBeforeButtonAppeared: false
+    gameStartedBeforeButtonAppeared: false,
+    changeSoundPlayed: false,
+    startSoundPlayed: false,
+    resultScreenVisible: false,
+    canPressSpace: true,
+    // Флаг видимости кнопки старта
+    startBtnVisible: false
 };
 
 // Ссылки на DOM элементы
@@ -104,6 +110,36 @@ function setInstructionText(text, immediate = false) {
 function initAudioSystem() {
     console.log('Инициализация системы звуков...');
     console.log('Telegram Web App:', state.isTelegramWebApp ? 'Да' : 'Нет');
+    
+    // Дополнительный preload для iOS
+    if (state.isIOS) {
+        console.log('iOS обнаружен - дополнительная предзагрузка звуков');
+        
+        const iosPreloadSounds = [
+            'sounds/choose.mp3',
+            'sounds/repeat.mp3',
+            'sounds/result.mp3',
+            'sounds/timer.mp3'
+        ];
+        
+        iosPreloadSounds.forEach(src => {
+            const audio = new Audio();
+            audio.src = src;
+            audio.volume = 0.001; // Почти тихо
+            audio.setAttribute('playsinline', '');
+            audio.setAttribute('webkit-playsinline', '');
+            audio.preload = 'auto';
+            audio.load();
+            
+            // Пробуем воспроизвести и сразу пауза
+            setTimeout(() => {
+                audio.play().then(() => {
+                    audio.pause();
+                    audio.currentTime = 0;
+                }).catch(() => {});
+            }, 100);
+        });
+    }
     
     // Звуки которые нам нужны
     const soundFiles = [
@@ -303,27 +339,139 @@ function playSound(soundName) {
     }
 }
 
+// ИСПРАВЛЕНИЕ: Функция для надежного воспроизведения на iOS
+function playIOSSound(soundName) {
+    if (!state.soundsLoaded || !state.audioInitialized) {
+        return false;
+    }
+    
+    // Особый случай для iOS - всегда использовать новый Audio объект для CHOOSE, REPEAT, CHANGE (RESULT)
+    if (state.isIOS) {
+        const soundMap = {
+            'result': 'sounds/result.mp3',
+            'repeat': 'sounds/repeat.mp3',
+            'choose': 'sounds/choose.mp3',
+            'change': 'sounds/result.mp3'
+        };
+        
+        if (soundMap[soundName]) {
+            try {
+                const audio = new Audio();
+                audio.src = soundMap[soundName];
+                
+                audio.volume = 1.0;
+                audio.setAttribute('playsinline', '');
+                audio.setAttribute('webkit-playsinline', '');
+                audio.playsInline = true;
+                audio.webkitPlaysInline = true;
+                audio.preload = 'auto';
+                
+                // На iOS сначала нужно загрузить
+                audio.load();
+                
+                const playPromise = audio.play();
+                
+                if (playPromise !== undefined) {
+                    playPromise.then(() => {
+                        console.log(`✓ iOS: ${soundName} воспроизведен`);
+                    }).catch(e => {
+                        console.warn(`✗ iOS: ${soundName} ошибка`, e);
+                        // Fallback на обычный метод, если новый объект не сработал
+                        return playSound(soundName); 
+                    });
+                }
+                
+                return true;
+            } catch (e) {
+                console.warn(`Исключение iOS для ${soundName}:`, e);
+                return playSound(soundName); // fallback
+            }
+        }
+    }
+    
+    // Для других платформ или для других звуков используем обычный метод
+    return playSound(soundName);
+}
+
+// ИСПРАВЛЕНИЕ: Улучшенная функция playTimerSound
+function playTimerSound(number) {
+    if (number < 0) return;
+    
+    // Для таймера используем специальный подход
+    if (!state.soundsLoaded || !state.audioInitialized) {
+        return;
+    }
+    
+    const soundName = 'timer';
+    const instances = state.soundInstances[soundName];
+    if (!instances || instances.length === 0) {
+        return;
+    }
+    
+    const now = Date.now();
+    
+    // Ищем самый старый экземпляр, который не играет или играл давно
+    let oldestInstance = instances[0];
+    for (const instance of instances) {
+        // Ищем неиграющий экземпляр, или самый старый
+        if (!instance.isPlaying) {
+             oldestInstance = instance;
+             break;
+        }
+        if (instance.lastPlayTime < oldestInstance.lastPlayTime) {
+            oldestInstance = instance;
+        }
+    }
+
+    // Проверяем, не воспроизводился ли этот экземпляр слишком недавно
+    if (now - oldestInstance.lastPlayTime < 50) { 
+        return;
+    }
+    
+    try {
+        // Сбрасываем время
+        oldestInstance.audio.currentTime = 0;
+        oldestInstance.isPlaying = true;
+        oldestInstance.lastPlayTime = now;
+        
+        // Web App атрибуты
+        if (state.isTelegramWebApp) {
+            oldestInstance.audio.setAttribute('playsinline', '');
+            oldestInstance.audio.setAttribute('webkit-playsinline', '');
+            oldestInstance.audio.setAttribute('muted', 'false');
+            oldestInstance.audio.muted = false;
+        }
+        
+        // Воспроизводим БЕЗ задержки
+        oldestInstance.audio.play().then(() => {
+            setTimeout(() => {
+                oldestInstance.isPlaying = false;
+            }, 300);
+        }).catch(error => {
+            console.warn(`Таймер звук ошибка: ${error.name}`);
+            oldestInstance.isPlaying = false;
+        });
+        
+    } catch (error) {
+        oldestInstance.isPlaying = false;
+    }
+}
+
 // Функции для конкретных звуков
 function playStartSound() {
     return playSound('start');
 }
 
 function playChooseSound() {
-    return playSound('choose');
+    return playIOSSound('choose');
 }
 
 function playRepeatSound() {
-    return playSound('repeat');
-}
-
-function playTimerSound(number) {
-    if (number < 0) return;
-    // Для таймера всегда пробуем воспроизвести
-    playSound('timer');
+    return playIOSSound('repeat');
 }
 
 function playChangeSound() {
-    return playSound('change');
+    return playIOSSound('change');
 }
 
 // Принудительная активация аудио
@@ -391,6 +539,7 @@ function updateLoadingUI() {
             elements.startBtn.disabled = true;
             elements.startBtn.style.pointerEvents = 'none';
             elements.startBtn.style.opacity = '0.5';
+            state.startBtnVisible = false;
         }
         
         setTimeout(updateLoadingUI, 500);
@@ -416,6 +565,7 @@ function updateLoadingUI() {
                 elements.startBtn.classList.remove('hidden');
                 elements.startBtn.style.opacity = '0';
                 elements.startBtn.style.transition = 'opacity 0.3s ease';
+                state.startBtnVisible = true;
                 
                 setTimeout(() => {
                     elements.startBtn.style.opacity = '1';
@@ -517,6 +667,21 @@ function render(container, data) {
     container.appendChild(fragment);
 }
 
+// ИСПРАВЛЕНИЕ: Надежное скрытие кнопки
+function hideStartButtonImmediately() {
+    if (!elements.startBtn) return;
+    
+    // Немедленно скрываем без анимации
+    elements.startBtn.classList.add('hidden');
+    elements.startBtn.disabled = true;
+    elements.startBtn.style.pointerEvents = 'none';
+    elements.startBtn.style.opacity = '0';
+    elements.startBtn.style.transform = '';
+    elements.startBtn.style.transition = '';
+    state.startBtnVisible = false;
+    state.gameStartedBeforeButtonAppeared = true; // Устанавливаем флаг
+}
+
 // Функции для обработки касаний
 function setupTouchHandlers() {
     console.log('Настройка обработчиков касаний...');
@@ -587,6 +752,8 @@ function handleStartButton() {
     if (state.startBtnLock) return;
     
     ensureAudio();
+    // ИСПРАВЛЕНИЕ 1: Скрываем кнопку перед началом игры
+    hideStartButtonImmediately();
     startGame();
 }
 
@@ -610,6 +777,11 @@ function startIdle() {
     state.changeSoundPlayed = false;
     state.startSoundPlayed = false;
     
+    // ИСПРАВЛЕНИЕ 2: Устанавливаем текст "Начнём?" сразу при первом входе
+    if (state.lastResult === null && state.imagesLoaded) {
+        setInstructionText("Начнём?", true);
+    }
+    
     createRandomOrder();
     
     if (!state.imagesLoaded) {
@@ -624,8 +796,10 @@ function startIdle() {
 function startIdleAnimation() {
     // Определяем текст в зависимости от lastResult
     let instructionText;
+    let immediateText = false;
     if (state.lastResult === null) {
         instructionText = "Начнём?";
+        immediateText = true; // ИСПРАВЛЕНИЕ 2: Сразу при первом запуске
     } else if (state.lastResult === 'win') {
         instructionText = "Сложность повысилась!";
     } else if (state.lastResult === 'almost') {
@@ -639,7 +813,7 @@ function startIdleAnimation() {
         elements.instruction.textContent = instructionText;
         elements.instruction.classList.add('show');
     } else {
-        setInstructionText(instructionText);
+        setInstructionText(instructionText, immediateText);
     }
     
     state.parts.forEach(p => {
@@ -688,35 +862,20 @@ function stopIdle() {
     }
 }
 
-// Анимация скрытия кнопки
-function hideButtonWithAnimation(button) {
-    // ИСПРАВЛЕНИЕ: Проверяем, существует ли кнопка и видима ли она
-    if (!button || button.classList.contains('hidden')) {
-        return;
-    }
-    
-    button.style.transition = 'all 0.2s ease';
-    button.style.opacity = '0';
-    button.style.transform = 'scale(0.8)';
-    setTimeout(() => {
-        button.classList.add('hidden');
-        button.style.transition = '';
-        button.style.opacity = '';
-        button.style.transform = '';
-    }, 200);
-}
-
 // Функция для анимации смены цифр таймера
 function animateTimerChange(timerNumber) {
     const timer = elements.timer;
+    
+    // ИСПРАВЛЕНИЕ 3: Звук таймера всегда должен играть при смене цифры
+    playTimerSound(timerNumber); 
+    
+    // Проверяем, есть ли содержимое
     if (timer.textContent && timer.textContent.trim()) {
         const digitSpan = document.createElement('span');
         digitSpan.className = 'timer-digit changing';
         digitSpan.textContent = timer.textContent;
         timer.innerHTML = '';
         timer.appendChild(digitSpan);
-        
-        playTimerSound(timerNumber);
         
         setTimeout(() => {
             if (digitSpan.parentNode === timer) {
@@ -730,24 +889,17 @@ function animateTimerChange(timerNumber) {
 function startGame() {
     if (state.startBtnLock) return;
     
-    // ИСПРАВЛЕНИЕ: Устанавливаем флаг что игра началась
-    state.gameStartedBeforeButtonAppeared = true;
+    // Скрываем кнопку ПЕРЕД началом игры (на всякий случай)
+    // ИСПРАВЛЕНИЕ 1: Вызывается в handleStartButton и keydown
+    // hideStartButtonImmediately(); 
     
     state.startBtnLock = true;
-    
-    // ИСПРАВЛЕНИЕ: Скрываем кнопку если она есть
-    if (elements.startBtn && !elements.startBtn.classList.contains('hidden')) {
-        hideButtonWithAnimation(elements.startBtn);
-    }
-    
     state.isBusy = true;
     state.gamePhase = 'creating';
     state.changeSoundPlayed = false;
     
     playStartSound();
-    
     stopIdle();
-    
     setInstructionText("Создаём персонажа...");
     
     let duration = 0;
@@ -821,7 +973,8 @@ function finalizeTarget() {
         state.isTimerActive = true;
         
         setTimeout(() => {
-            animateTimerChange(timeLeft);
+            // ИСПРАВЛЕНИЕ 3: Вызываем animateTimerChange для первого звука
+            animateTimerChange(timeLeft); 
         }, 100);
         
         const t = setInterval(() => {
@@ -915,6 +1068,7 @@ function select() {
         return false;
     }
     
+    // ИСПРАВЛЕНИЕ 4: playChooseSound вызывает playIOSSound
     playChooseSound();
     
     state.canSelect = false;
@@ -928,7 +1082,12 @@ function select() {
     state.currentPart++;
     
     if (state.currentPart >= state.parts.length) {
-        hideButtonWithAnimation(elements.selectBtn);
+        // Скрываем кнопку выбора
+        elements.selectBtn.classList.remove('show');
+        elements.selectBtn.classList.add('hidden');
+        elements.selectBtn.style.opacity = '';
+        elements.selectBtn.style.transform = '';
+        
         setTimeout(() => {
             state.canSelect = true;
             finish();
@@ -1032,10 +1191,18 @@ function finish() {
 function reset() {
     if (state.resetBtnLock || state.isBusy) return;
     
+    // ИСПРАВЛЕНИЕ 4: playRepeatSound вызывает playIOSSound
     playRepeatSound();
     
     state.resetBtnLock = true;
     state.canPressSpace = false;
+    
+    // ИСПРАВЛЕНИЕ 2: Сразу меняем текст на "Начнём?"
+    setInstructionText("Начнём?", true); // immediate = true
+    
+    // Сбрасываем результат ПЕРЕД переходом
+    state.lastResult = null;
+    
     elements.resultAgainBtn.disabled = true;
     elements.resultAgainBtn.style.pointerEvents = 'none';
     elements.resultAgainBtn.style.cursor = 'not-allowed';
@@ -1046,8 +1213,6 @@ function reset() {
     
     // Сбрасываем флаг начала игры
     state.gameStartedBeforeButtonAppeared = false;
-    // Сбрасываем lastResult чтобы показывать "Начнём?"
-    state.lastResult = null;
     
     state.target = {};
     state.selection = {};
@@ -1058,12 +1223,14 @@ function reset() {
         elements.resultTarget.innerHTML = '';
         elements.resultPlayer.innerHTML = '';
         
+        // Восстанавливаем кнопку
         elements.startBtn.classList.remove('hidden');
         elements.startBtn.style.opacity = '1';
         elements.startBtn.style.transform = 'scale(1)';
         elements.startBtn.disabled = false;
         elements.startBtn.style.pointerEvents = 'auto';
         elements.startBtn.style.cursor = 'pointer';
+        state.startBtnVisible = true;
         
         elements.resultAgainBtn.disabled = false;
         elements.resultAgainBtn.style.pointerEvents = 'auto';
@@ -1077,6 +1244,12 @@ function reset() {
         
         elements.gameArea.classList.remove('hidden');
         updateStats();
+        
+        // ИСПРАВЛЕНИЕ 2: Убедимся что текст установлен - уже сделано в начале reset
+        // if (elements.instruction.textContent !== "Начнём?") {
+        //     elements.instruction.textContent = "Начнём?";
+        //     elements.instruction.classList.add('show');
+        // }
         
         setTimeout(() => {
             startIdle();
@@ -1124,6 +1297,8 @@ window.addEventListener('keydown', function(e) {
         ensureAudio();
         
         if (state.gamePhase === 'idle' && !state.startBtnLock) {
+            // ИСПРАВЛЕНИЕ 1: При старте через пробел СНАЧАЛА скрываем кнопку
+            hideStartButtonImmediately();
             startGame();
         } else if (state.gamePhase === 'selecting' && state.canSelect) {
             select();
@@ -1166,10 +1341,13 @@ window.onload = async () => {
         // Сначала показываем загрузку
         elements.instruction.textContent = "Загрузка...";
         elements.instruction.classList.add('show');
+        
+        // Начинаем с полностью скрытой кнопки
         elements.startBtn.classList.add('hidden');
         elements.startBtn.disabled = true;
-        elements.startBtn.style.opacity = '0.5';
+        elements.startBtn.style.opacity = '0';
         elements.startBtn.style.pointerEvents = 'none';
+        state.startBtnVisible = false;
         
         // Инициализируем систему звуков ПЕРВЫМ ДЕЛОМ
         initAudioSystem();
