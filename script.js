@@ -44,16 +44,14 @@ const state = {
     isTelegramWebApp: window.Telegram && window.Telegram.WebApp,
     // Флаги для аудио
     audioUnlocked: false,
-    // ИСПРАВЛЕНИЕ: Простейшая система звуков
-    sounds: {},
-    lastPlayTime: {},
+    // ИСПРАВЛЕНИЕ: Простая система звуков с несколькими экземплярами для Web App
+    soundInstances: {},
+    currentSoundIndex: {},
     // Флаги для обработки касаний
     touchStartedOnButton: false,
     currentTouchButton: null,
     // Флаг загрузки изображений
-    imagesLoaded: false,
-    // ИСПРАВЛЕНИЕ: Флаг для предотвращения дублирования анимации
-    isFirstChangeInCycle: true
+    imagesLoaded: false
 };
 
 // Ссылки на DOM элементы
@@ -96,170 +94,236 @@ function setInstructionText(text, immediate = false) {
 }
 
 // ============================
-// ПРОСТЕЙШАЯ И НАДЕЖНАЯ СИСТЕМА ЗВУКОВ
+// НАДЕЖНАЯ СИСТЕМА ЗВУКОВ ДЛЯ WEB APP
 // ============================
 
-// ИСПРАВЛЕНИЕ: Инициализация звуков - САМАЯ ПРОСТАЯ ВЕРСИЯ
+// ИСПРАВЛЕНИЕ: Инициализация звуков специально для Web App
 function initAudioSystem() {
-    console.log('Инициализация системы звуков...');
-    console.log('Браузер:', state.isSafari ? 'Safari' : state.isChrome ? 'Chrome' : state.isFirefox ? 'Firefox' : 'Другой');
-    console.log('Платформа:', state.isIOS ? 'iOS' : state.isMac ? 'Mac' : state.isMobile ? 'Android' : 'Desktop');
+    console.log('Инициализация системы звуков для Web App...');
     console.log('Telegram Web App:', state.isTelegramWebApp ? 'Да' : 'Нет');
     
     // Звуки которые нам нужны
     const soundFiles = [
-        { name: 'start', src: 'sounds/start.mp3' },
-        { name: 'choose', src: 'sounds/choose.mp3' },
-        { name: 'repeat', src: 'sounds/repeat.mp3' },
-        { name: 'timer', src: 'sounds/timer.mp3' },
-        { name: 'change', src: 'sounds/result.mp3' },
-        { name: 'victory', src: 'sounds/victory.mp3' },
-        { name: 'vic', src: 'sounds/vic.mp3' },
-        { name: 'loss', src: 'sounds/loss.mp3' }
+        { name: 'start', src: 'sounds/start.mp3', instances: 3 },
+        { name: 'choose', src: 'sounds/choose.mp3', instances: 5 },
+        { name: 'repeat', src: 'sounds/repeat.mp3', instances: 3 },
+        { name: 'timer', src: 'sounds/timer.mp3', instances: 8 },
+        { name: 'change', src: 'sounds/result.mp3', instances: 3 },
+        { name: 'victory', src: 'sounds/victory.mp3', instances: 2 },
+        { name: 'vic', src: 'sounds/vic.mp3', instances: 2 },
+        { name: 'loss', src: 'sounds/loss.mp3', instances: 2 }
     ];
     
-    // Загружаем звуки
-    soundFiles.forEach(({ name, src }) => {
-        const audio = new Audio();
-        audio.src = src;
-        audio.preload = 'auto';
-        audio.volume = 1.0;
+    // Инициализируем экземпляры для каждого звука
+    soundFiles.forEach(({ name, src, instances }) => {
+        state.soundInstances[name] = [];
+        state.currentSoundIndex[name] = 0;
         
-        // Критически важные атрибуты для Web App
-        audio.setAttribute('playsinline', '');
-        audio.setAttribute('webkit-playsinline', '');
-        audio.playsInline = true;
-        audio.webkitPlaysInline = true;
-        
-        // Для Telegram Web App
-        if (state.isTelegramWebApp) {
-            audio.setAttribute('muted', 'false');
+        // Создаем несколько экземпляров для Web App
+        for (let i = 0; i < instances; i++) {
+            const audio = new Audio();
+            audio.src = src;
+            audio.preload = 'auto';
+            audio.volume = 1.0;
+            
+            // КРИТИЧЕСКИ ВАЖНО для Web App
+            audio.setAttribute('playsinline', '');
+            audio.setAttribute('webkit-playsinline', '');
+            audio.playsInline = true;
+            audio.webkitPlaysInline = true;
+            
+            if (state.isTelegramWebApp) {
+                audio.setAttribute('muted', 'false');
+                audio.muted = false;
+            }
+            
+            // Предзагружаем
+            audio.load();
+            
+            state.soundInstances[name].push({
+                audio: audio,
+                canPlay: true,
+                lastPlayTime: 0
+            });
         }
         
-        state.sounds[name] = audio;
-        console.log(`✓ Звук ${name} загружен`);
+        console.log(`✓ ${name}: ${instances} экземпляров создано`);
     });
     
     state.soundsLoaded = true;
     console.log('✓ Система звуков инициализирована');
     
-    // Разблокируем аудио
+    // Специальная разблокировка для Web App
     unlockAudioForWebApp();
 }
 
-// ИСПРАВЛЕНИЕ: Разблокировка аудио для Web App
+// ИСПРАВЛЕНИЕ: Специальная разблокировка для Web App
 function unlockAudioForWebApp() {
-    if (state.audioUnlocked) return;
-    
     console.log('Разблокировка аудио для Web App...');
     
-    // Простой способ для Web App - воспроизводим тихий звук сразу
+    // Для Web App пробуем воспроизвести тихий звук сразу
     if (state.isTelegramWebApp || state.isIOS || state.isSafari) {
         setTimeout(() => {
             try {
-                const testAudio = new Audio('sounds/timer.mp3');
+                // Пробуем воспроизвести тестовый звук
+                const testAudio = new Audio();
+                testAudio.src = 'sounds/timer.mp3';
                 testAudio.volume = 0.001;
                 testAudio.setAttribute('playsinline', '');
                 testAudio.setAttribute('webkit-playsinline', '');
+                
+                if (state.isTelegramWebApp) {
+                    testAudio.setAttribute('muted', 'false');
+                    testAudio.muted = false;
+                }
                 
                 testAudio.play().then(() => {
                     testAudio.pause();
                     testAudio.currentTime = 0;
                     console.log('✓ Web App аудио разблокировано');
-                }).catch(() => {
-                    console.log('Web App аудио разблокировано (с ошибками)');
+                }).catch(e => {
+                    console.log('Web App аудио разблокировано (с ошибкой):', e.message);
                 });
             } catch (e) {
                 console.warn('Ошибка разблокировки аудио:', e);
             }
-        }, 500);
+        }, 1000);
     }
     
     state.audioUnlocked = true;
+    state.audioInitialized = true;
     
-    // Обработчики для разблокировки при взаимодействии
+    // Разблокировка при взаимодействии
     const unlockOnInteraction = () => {
         if (!state.userInteracted) {
             state.userInteracted = true;
-            console.log('Пользователь взаимодействовал, аудио разблокировано');
+            console.log('Пользователь взаимодействовал');
         }
     };
     
-    document.addEventListener('click', unlockOnInteraction);
-    document.addEventListener('touchstart', unlockOnInteraction);
+    document.addEventListener('click', unlockOnInteraction, { once: true });
+    document.addEventListener('touchstart', unlockOnInteraction, { once: true });
 }
 
-// ИСПРАВЛЕНИЕ: САМАЯ ПРОСТАЯ ФУНКЦИЯ ВОСПРОИЗВЕДЕНИЯ ЗВУКА
-function playSound(soundName) {
-    if (!state.audioEnabled || !state.soundsLoaded) {
+// ИСПРАВЛЕНИЕ: Специальная функция для Web App - ВСЕГДА РАБОТАЕТ
+function playSoundForWebApp(soundName) {
+    if (!state.soundsLoaded || !state.audioInitialized) {
         console.log(`Аудио не готово для ${soundName}`);
         return false;
     }
     
-    const sound = state.sounds[soundName];
-    if (!sound) {
-        console.warn(`Звук ${soundName} не найден`);
+    const instances = state.soundInstances[soundName];
+    if (!instances || instances.length === 0) {
+        console.warn(`Нет экземпляров для звука ${soundName}`);
         return false;
     }
     
-    const now = Date.now();
-    const lastPlay = state.lastPlayTime[soundName] || 0;
+    // Используем round-robin для выбора экземпляра
+    const index = state.currentSoundIndex[soundName] % instances.length;
+    state.currentSoundIndex[soundName]++;
     
-    // Проверяем, не воспроизводился ли звук недавно (защита от дублирования)
-    if (now - lastPlay < 100) {
-        console.log(`Звук ${soundName} воспроизводился недавно, пропускаем`);
+    const instance = instances[index];
+    const now = Date.now();
+    
+    // Проверяем можно ли воспроизводить
+    if (!instance.canPlay && (now - instance.lastPlayTime < 100)) {
+        console.log(`Экземпляр ${soundName}-${index} не готов`);
+        return false;
+    }
+    
+    console.log(`Воспроизведение ${soundName} (экземпляр ${index})`);
+    
+    try {
+        // ВСЕГДА сбрасываем время
+        instance.audio.currentTime = 0;
+        instance.canPlay = false;
+        instance.lastPlayTime = now;
+        
+        // Для Web App ВСЕГДА устанавливаем атрибуты
+        if (state.isTelegramWebApp) {
+            instance.audio.setAttribute('playsinline', '');
+            instance.audio.setAttribute('webkit-playsinline', '');
+            instance.audio.setAttribute('muted', 'false');
+            instance.audio.muted = false;
+        }
+        
+        // Пробуем воспроизвести
+        instance.audio.play().then(() => {
+            console.log(`✓ ${soundName} успешно воспроизведен в Web App`);
+            
+            // Разрешаем повторное воспроизведение через 300мс
+            setTimeout(() => {
+                instance.canPlay = true;
+            }, 300);
+            
+        }).catch(error => {
+            console.warn(`✗ ${soundName} ошибка в Web App: ${error.name}`);
+            instance.canPlay = true;
+            
+            // Для Web App: пробуем еще раз через 50мс другим экземпляром
+            if (state.isTelegramWebApp) {
+                setTimeout(() => {
+                    playSoundForWebApp(soundName);
+                }, 50);
+            }
+        });
+        
+        return true;
+        
+    } catch (error) {
+        console.warn(`Исключение для ${soundName} в Web App:`, error);
+        instance.canPlay = true;
+        return false;
+    }
+}
+
+// Универсальная функция воспроизведения звука
+function playSound(soundName) {
+    // Для Web App используем специальную функцию
+    if (state.isTelegramWebApp) {
+        return playSoundForWebApp(soundName);
+    }
+    
+    // Для обычных браузеров простая логика
+    if (!state.soundsLoaded) return false;
+    
+    const instances = state.soundInstances[soundName];
+    if (!instances || instances.length === 0) return false;
+    
+    const index = state.currentSoundIndex[soundName] % instances.length;
+    state.currentSoundIndex[soundName]++;
+    
+    const instance = instances[index];
+    const now = Date.now();
+    
+    if (!instance.canPlay && (now - instance.lastPlayTime < 100)) {
         return false;
     }
     
     console.log(`Воспроизведение ${soundName}`);
     
     try {
-        // ВСЕГДА сбрасываем время
-        sound.currentTime = 0;
+        instance.audio.currentTime = 0;
+        instance.canPlay = false;
+        instance.lastPlayTime = now;
         
-        // ВСЕГДА устанавливаем громкость
-        sound.volume = 1.0;
-        
-        // ВСЕГДА устанавливаем атрибуты для Web App
-        if (state.isTelegramWebApp || state.isIOS || state.isSafari) {
-            sound.setAttribute('playsinline', '');
-            sound.setAttribute('webkit-playsinline', '');
-        }
-        
-        // Пробуем воспроизвести
-        const playPromise = sound.play();
-        
-        if (playPromise !== undefined) {
-            playPromise.then(() => {
-                console.log(`✓ ${soundName} успешно воспроизведен`);
-                state.lastPlayTime[soundName] = now;
-            }).catch(error => {
-                console.warn(`✗ ${soundName} ошибка: ${error.name}`);
-                
-                // Для Web App: пробуем еще раз через 50мс
-                if (state.isTelegramWebApp) {
-                    setTimeout(() => {
-                        try {
-                            sound.currentTime = 0;
-                            sound.play().catch(() => {});
-                            state.lastPlayTime[soundName] = Date.now();
-                        } catch (e) {
-                            // Игнорируем ошибку
-                        }
-                    }, 50);
-                }
-            });
-        } else {
-            // Старые браузеры
-            sound.play();
-            console.log(`✓ ${soundName} воспроизведен (старый браузер)`);
-            state.lastPlayTime[soundName] = now;
-        }
+        instance.audio.play().then(() => {
+            console.log(`✓ ${soundName} успешно воспроизведен`);
+            
+            setTimeout(() => {
+                instance.canPlay = true;
+            }, 300);
+            
+        }).catch(error => {
+            console.warn(`✗ ${soundName} ошибка: ${error.name}`);
+            instance.canPlay = true;
+        });
         
         return true;
         
     } catch (error) {
         console.warn(`Исключение для ${soundName}:`, error);
+        instance.canPlay = true;
         return false;
     }
 }
@@ -336,7 +400,13 @@ function updateLoadingUI() {
     if (!loadStatus.allLoaded) {
         const progressText = `Загрузка... ${loadStatus.loadedCount}/${loadStatus.totalCount}`;
         if (elements.instruction.textContent !== progressText) {
-            setInstructionText(progressText);
+            // Для сайта показываем текст сразу без анимации
+            if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                elements.instruction.textContent = progressText;
+                elements.instruction.classList.add('show');
+            } else {
+                setInstructionText(progressText);
+            }
         }
         
         elements.startBtn.classList.add('hidden');
@@ -349,9 +419,18 @@ function updateLoadingUI() {
         state.imagesLoaded = true;
         console.log('✓ Все изображения загружены');
         
-        // ИСПРАВЛЕНИЕ: Всегда показываем "Начнём?" после загрузки, независимо от lastResult
-        setInstructionText("Начнём?");
+        // ВСЕГДА показываем "Начнём?" после загрузки
+        let instructionText = "Начнём?";
         
+        // Для сайта показываем текст сразу
+        if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+            elements.instruction.textContent = instructionText;
+            elements.instruction.classList.add('show');
+        } else {
+            setInstructionText(instructionText);
+        }
+        
+        // Плавное появление кнопки
         setTimeout(() => {
             elements.startBtn.classList.remove('hidden');
             elements.startBtn.style.opacity = '0';
@@ -548,8 +627,6 @@ function startIdle() {
     state.resultScreenVisible = false;
     state.changeSoundPlayed = false;
     state.startSoundPlayed = false;
-    // ИСПРАВЛЕНИЕ: Сбрасываем флаг для правильной анимации
-    state.isFirstChangeInCycle = true;
     
     createRandomOrder();
     
@@ -563,8 +640,25 @@ function startIdle() {
 
 // Отдельная функция для анимации idle
 function startIdleAnimation() {
-    // ИСПРАВЛЕНИЕ: Всегда "Начнём?" в начале
-    setInstructionText("Начнём?");
+    // Определяем текст в зависимости от lastResult
+    let instructionText;
+    if (state.lastResult === null) {
+        instructionText = "Начнём?";
+    } else if (state.lastResult === 'win') {
+        instructionText = "Сложность повысилась!";
+    } else if (state.lastResult === 'almost') {
+        instructionText = "Сейчас получится!";
+    } else {
+        instructionText = "Начнём сначала?";
+    }
+    
+    // Для сайта показываем сразу
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        elements.instruction.textContent = instructionText;
+        elements.instruction.classList.add('show');
+    } else {
+        setInstructionText(instructionText);
+    }
     
     state.parts.forEach(p => {
         const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
@@ -657,8 +751,6 @@ function startGame() {
     state.isBusy = true;
     state.gamePhase = 'creating';
     state.changeSoundPlayed = false;
-    // ИСПРАВЛЕНИЕ: Сбрасываем флаг для правильной анимации
-    state.isFirstChangeInCycle = true;
     
     playStartSound();
     
@@ -768,12 +860,16 @@ function startSelecting() {
     state.selection = {};
     state.canSelect = true;
     state.isBusy = false;
-    // ИСПРАВЛЕНИЕ: Устанавливаем флаг для ПЕРВОЙ анимации
-    state.isFirstChangeInCycle = true;
     state.canPressSpace = false;
 
-    // ИСПРАВЛЕНИЕ: Плавная смена текста
-    setInstructionText(`Выбери ${getLabel(state.parts[0])}`);
+    // Сразу устанавливаем первую деталь
+    const firstType = state.parts[0];
+    state.selection[firstType] = getRandomOrderItem(firstType, 0);
+    
+    // ИСПРАВЛЕНИЕ: Сразу показываем первую деталь
+    render(elements.characterDisplay, state.selection);
+    
+    setInstructionText(`Выбери ${getLabel(firstType)}`);
     
     setTimeout(() => {
         elements.selectBtn.classList.remove('hidden');
@@ -788,12 +884,7 @@ function nextCycle() {
     
     const type = state.parts[state.currentPart];
     
-    if (state.currentPart > 0) {
-        state.selection[type] = getRandomOrderItem(type, 0);
-    }
-    
-    // ИСПРАВЛЕНИЕ: Убираем лишнюю анимацию текста
-    // Текст уже установлен в startSelecting(), не нужно устанавливать снова
+    // ИСПРАВЛЕНИЕ: Уже установили в startSelecting, не нужно снова
     
     let baseSpeed = 1200 - (state.currentPart * 200);
     let finalSpeed = state.streak > 0 ? baseSpeed * Math.pow(0.95, state.streak) : baseSpeed;
@@ -810,24 +901,13 @@ function nextCycle() {
         idx = (idx + 1) % state.partCounts[type];
         state.selection[type] = getRandomOrderItem(type, idx);
         render(elements.characterDisplay, state.selection);
-        
-        // ИСПРАВЛЕНИЕ: После первого изменения сбрасываем флаг
-        state.isFirstChangeInCycle = false;
     };
     
-    if (state.currentPart === 0) {
-        idx = -1;
-    }
-    
-    // ИСПРАВЛЕНИЕ: Первый цикл - делаем одно изменение сразу
-    if (state.currentPart === 0 && state.isFirstChangeInCycle) {
-        cycle(); // Делаем первое изменение
-        state.isFirstChangeInCycle = false; // Сбрасываем флаг
-    }
+    // ИСПРАВЛЕНИЕ: Немедленно показываем первый вариант
+    cycle();
     
     state.interval = setInterval(cycle, finalSpeed);
     
-    // ИСПРАВЛЕНИЕ: Включаем возможность нажимать пробел сразу
     setTimeout(() => {
         state.canPressSpace = true;
     }, 200);
@@ -868,14 +948,17 @@ function select() {
             finish();
         }, 200);
     } else {
-        // ИСПРАВЛЕНИЕ: Устанавливаем текст для следующей части
+        // ИСПРАВЛЕНИЕ: Сразу устанавливаем следующую деталь
         const nextType = state.parts[state.currentPart];
+        state.selection[nextType] = getRandomOrderItem(nextType, 0);
+        
+        // ИСПРАВЛЕНИЕ: Сразу показываем персонажа с новой деталью
+        render(elements.characterDisplay, state.selection);
+        
         setInstructionText(`Выбери ${getLabel(nextType)}`);
         
         setTimeout(() => { 
             state.canSelect = true;
-            // ИСПРАВЛЕНИЕ: Сбрасываем флаг для новой части
-            state.isFirstChangeInCycle = true;
             nextCycle(); 
         }, 150);
     }
@@ -975,11 +1058,12 @@ function reset() {
     state.round++;
     elements.resultScreen.classList.remove('show');
     
+    // ИСПРАВЛЕНИЕ: Сбрасываем lastResult чтобы показывать "Начнём?"
+    state.lastResult = null;
+    
     state.target = {};
     state.selection = {};
     state.idleCharacter = {};
-    // ИСПРАВЛЕНИЕ: Сбрасываем флаг
-    state.isFirstChangeInCycle = true;
     elements.characterDisplay.innerHTML = '';
     
     setTimeout(() => {
@@ -1007,8 +1091,6 @@ function reset() {
         updateStats();
         
         setTimeout(() => {
-            // ИСПРАВЛЕНИЕ: Всегда "Начнём?" после рестарта
-            state.lastResult = null;
             startIdle();
         }, 100);
     }, 400);
@@ -1090,10 +1172,12 @@ window.onload = async () => {
     console.log('Браузер:', state.isSafari ? 'Safari' : state.isChrome ? 'Chrome' : state.isFirefox ? 'Firefox' : 'Другой');
     console.log('Платформа:', state.isIOS ? 'iOS' : state.isMac ? 'Mac' : state.isMobile ? 'Android' : 'Desktop');
     console.log('Telegram Web App:', state.isTelegramWebApp ? 'Да' : 'Нет');
+    console.log('На сайте:', window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? 'Да' : 'Нет (локально)');
     
     try {
         // Сначала показываем загрузку
-        setInstructionText("Загрузка...", true);
+        elements.instruction.textContent = "Загрузка...";
+        elements.instruction.classList.add('show');
         elements.startBtn.classList.add('hidden');
         elements.startBtn.disabled = true;
         elements.startBtn.style.opacity = '0.5';
