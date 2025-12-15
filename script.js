@@ -191,14 +191,37 @@ function checkImagesLoaded() {
     return { allLoaded, loadedCount, totalCount };
 }
 
-// ОБНОВЛЕНО: Учитывает и картинки, и звуки
+// ИЗМЕНЕНИЕ: Теперь показывает процент загрузки
 function updateLoadingUI() {
     const imgStatus = checkImagesLoaded();
     const everythingLoaded = imgStatus.allLoaded && state.soundsLoaded;
     
+    // Новая логика расчета процента загрузки
+    // Общее количество единиц работы: 26 (изображений) + 1 (звуки) = 27
+    const totalWorkloadUnits = 27; 
+    
+    // Количество загруженных единиц: загруженные изображения + 1, если звуки загружены
+    const loadedSoundUnit = state.soundsLoaded ? 1 : 0; 
+    const loadedWorkloadUnits = imgStatus.loadedCount + loadedSoundUnit;
+    
+    let progressPercent = 0;
+    if (totalWorkloadUnits > 0) {
+        progressPercent = Math.round((loadedWorkloadUnits / totalWorkloadUnits) * 100);
+    }
+    
+    // Визуальное улучшение: если все изображения загружены, но звуки нет, показываем 99%
+    if (imgStatus.allLoaded && !state.soundsLoaded) {
+        progressPercent = 99;
+    }
+    // Если все загружено, гарантируем 100%
+    if (everythingLoaded) {
+        progressPercent = 100;
+    }
+
+
     if (!everythingLoaded) {
-        // Показываем прогресс
-        const progressText = `Загрузка... ${imgStatus.loadedCount}/${imgStatus.totalCount}`;
+        // Показываем прогресс в процентах
+        const progressText = `Загрузка... ${progressPercent}%`;
         if (elements.instruction.textContent !== progressText) {
             elements.instruction.textContent = progressText;
             elements.instruction.classList.add('show');
@@ -549,6 +572,7 @@ function finalizeTarget() {
     }, 500);
 }
 
+// ИЗМЕНЕНИЕ: Добавлен звук next.mp3 при появлении первого атрибута
 function startSelecting() {
     state.gamePhase = 'selecting';
     state.currentPart = 0;
@@ -562,6 +586,9 @@ function startSelecting() {
     render(elements.characterDisplay, state.selection);
     setInstructionText(`Выбери ${getLabel(firstType)}`);
     
+    // НОВОЕ: Звук при первом появлении атрибута
+    playNextSound();
+    
     setTimeout(() => {
         elements.selectBtn.classList.remove('hidden');
         elements.selectBtn.classList.add('show');
@@ -569,6 +596,7 @@ function startSelecting() {
     }, 400);
 }
 
+// nextCycle оставлен с проигрыванием звука при каждой прокрутке
 function nextCycle() {
     if (state.currentPart >= state.parts.length) { finish(); return; }
     
@@ -585,7 +613,7 @@ function nextCycle() {
         state.selection[type] = getRandomOrderItem(type, idx);
         render(elements.characterDisplay, state.selection);
         
-        // НОВОЕ: Проигрываем звук next.mp3 при каждой смене предмета
+        // Звук при каждой смене предмета во время прокрутки
         playNextSound();
     };
     state.interval = setInterval(cycle, finalSpeed);
@@ -596,6 +624,7 @@ function getLabel(t) {
     return {skin:'цвет кожи', head:'голову', body:'тело', accessory:'аксессуар'}[t]; 
 }
 
+// ИЗМЕНЕНИЕ: Добавлен звук next.mp3 при переходе к следующему атрибуту
 function select() {
     if (!state.canSelect || state.gamePhase !== 'selecting') return false;
     
@@ -614,6 +643,10 @@ function select() {
         state.selection[nextType] = getRandomOrderItem(nextType, 0);
         render(elements.characterDisplay, state.selection);
         setInstructionText(`Выбери ${getLabel(nextType)}`);
+        
+        // НОВОЕ: Звук при появлении следующего атрибута
+        playNextSound(); 
+        
         setTimeout(() => { state.canSelect = true; nextCycle(); }, 150);
     }
     return true;
