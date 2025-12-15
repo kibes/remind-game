@@ -61,7 +61,29 @@ const state = {
     // Safari-specific оптимизации
     safariAudioFixApplied: false,
     soundRetryCounts: {},
-    soundCache: {} // Кэш для часто используемых звуков
+    soundCache: {}, // Кэш для часто используемых звуков
+    // ИСПРАВЛЕНИЕ 1: Таймеры для блокировки спама по кнопкам
+    lastSelectTime: 0,
+    lastStartTime: 0,
+    lastResetTime: 0,
+    selectCooldown: 400, // минимальная задержка между нажатиями кнопки select (увеличено)
+    startCooldown: 800,  // минимальная задержка между нажатиями кнопки start
+    resetCooldown: 800,  // минимальная задержка между нажатиями кнопки reset
+    // ИСПРАВЛЕНИЕ 2: Громкость звуков
+    volumes: {
+        timer: 1.0,     // Увеличиваем громкость таймера
+        choose: 0.9,
+        start: 1.0,
+        repeat: 1.0,
+        change: 1.0,
+        victory: 1.0,
+        vic: 1.0,
+        loss: 1.0
+    },
+    // ИСПРАВЛЕНИЕ 4: Флаги для предотвращения дублирования звуков
+    isChoosePlaying: false,
+    isTimerPlaying: false,
+    lastTimerNumber: -1
 };
 
 // Ссылки на DOM элементы
@@ -255,7 +277,8 @@ function createSoundInstances() {
                 state.chooseSoundInstances.push({
                     sound: sound,
                     isPlaying: false,
-                    lastPlayTime: 0
+                    lastPlayTime: 0,
+                    index: i
                 });
             }
         });
@@ -271,7 +294,8 @@ function createSoundInstances() {
                 state.timerSounds.push({
                     sound: sound,
                     isPlaying: false,
-                    lastPlayTime: 0
+                    lastPlayTime: 0,
+                    index: i
                 });
             }
         });
@@ -456,7 +480,7 @@ function safariUnlockSequence() {
 // ============================
 
 // Умная функция воспроизведения звука
-function playSound(soundName, retryCount = 0, priority = false) {
+function playSound(soundName, retryCount = 0, priority = false, customVolume = null) {
     if (!state.audioEnabled || !state.audioInitialized) {
         console.log(`Аудио не готово для ${soundName}`);
         return false;
@@ -468,7 +492,7 @@ function playSound(soundName, retryCount = 0, priority = false) {
     // Ограничение частоты для одного звука
     if (state.lastPlayTime[soundName] && (now - state.lastPlayTime[soundName] < 30)) {
         if (retryCount === 0) {
-            setTimeout(() => playSound(soundName, 0, priority), 40);
+            setTimeout(() => playSound(soundName, 0, priority, customVolume), 40);
         }
         return false;
     }
@@ -484,14 +508,14 @@ function playSound(soundName, retryCount = 0, priority = false) {
     
     // Добавляем в очередь для Safari, для других пробуем сразу
     addToSoundQueue(soundName, () => {
-        actuallyPlaySound(soundName, retryCount);
+        actuallyPlaySound(soundName, retryCount, customVolume);
     }, priority);
     
     return true;
 }
 
 // Фактическое воспроизведение
-function actuallyPlaySound(soundName, retryCount = 0) {
+function actuallyPlaySound(soundName, retryCount = 0, customVolume = null) {
     const maxRetries = (state.isSafari || state.isIOS) ? 4 : 2;
     
     // Получаем звук из кэша
@@ -505,7 +529,7 @@ function actuallyPlaySound(soundName, retryCount = 0) {
         if (['timer', 'choose', 'start', 'change', 'repeat'].includes(soundName)) {
             loadSoundWithCache(`sounds/${soundName}.mp3`, soundName).then(loadedSound => {
                 if (loadedSound && retryCount === 0) {
-                    setTimeout(() => playSound(soundName, 0, true), 50);
+                    setTimeout(() => playSound(soundName, 0, true, customVolume), 50);
                 }
             });
         }
@@ -516,7 +540,7 @@ function actuallyPlaySound(soundName, retryCount = 0) {
     // Safari: проверяем, не воспроизводится ли уже
     if (state.isSafari && !sound.paused) {
         if (retryCount < maxRetries) {
-            setTimeout(() => actuallyPlaySound(soundName, retryCount + 1), 100 * (retryCount + 1));
+            setTimeout(() => actuallyPlaySound(soundName, retryCount + 1, customVolume), 100 * (retryCount + 1));
         }
         return false;
     }
@@ -524,7 +548,9 @@ function actuallyPlaySound(soundName, retryCount = 0) {
     try {
         // Safari: сбрасываем время и устанавливаем атрибуты
         sound.currentTime = 0;
-        sound.volume = 1.0;
+        
+        // Устанавливаем громкость (используем кастомную или стандартную)
+        sound.volume = customVolume !== null ? customVolume : (state.volumes[soundName] || 1.0);
         
         if (state.isSafari || state.isIOS) {
             sound.setAttribute('playsinline', 'true');
@@ -550,14 +576,14 @@ function actuallyPlaySound(soundName, retryCount = 0) {
                     if (retryCount < maxRetries) {
                         const delay = 150 * (retryCount + 1);
                         console.log(`Safari: повтор через ${delay}мс`);
-                        setTimeout(() => actuallyPlaySound(soundName, retryCount + 1), delay);
+                        setTimeout(() => actuallyPlaySound(soundName, retryCount + 1, customVolume), delay);
                     } 
                     // 2. Создаем новый элемент
                     else if (retryCount === maxRetries) {
                         console.log(`Safari: создаем новый элемент для ${soundName}`);
                         try {
                             const newSound = new Audio(sound.src);
-                            newSound.volume = 1.0;
+                            newSound.volume = customVolume !== null ? customVolume : (state.volumes[soundName] || 1.0);
                             newSound.setAttribute('playsinline', 'true');
                             newSound.play().catch(() => {});
                             console.log(`✓ ${soundName} через новый элемент`);
@@ -570,7 +596,7 @@ function actuallyPlaySound(soundName, retryCount = 0) {
                 } 
                 // Для других браузеров
                 else if (retryCount < maxRetries) {
-                    setTimeout(() => actuallyPlaySound(soundName, retryCount + 1), 100);
+                    setTimeout(() => actuallyPlaySound(soundName, retryCount + 1, customVolume), 100);
                 }
                 
                 return false;
@@ -593,20 +619,35 @@ function actuallyPlaySound(soundName, retryCount = 0) {
     }
 }
 
-// Специальные функции для проблемных звуков
+// Специальные функции для проблемных звуков с улучшенной надежностью
 
 // Для repeat (рестарт) - приоритетное воспроизведение
 function playRepeatSound() {
-    playSound('repeat', 0, true); // true = высокий приоритет
+    console.log('playRepeatSound вызван');
+    playSound('repeat', 0, true, state.volumes.repeat);
 }
 
 // Для change (result) - приоритетное воспроизведение
 function playChangeSound() {
-    playSound('change', 0, true);
+    console.log('playChangeSound вызван');
+    playSound('change', 0, true, state.volumes.change);
 }
 
-// Улучшенная функция для choose
+// Для start - приоритетное воспроизведение
+function playStartSound() {
+    console.log('playStartSound вызван');
+    playSound('start', 0, true, state.volumes.start);
+}
+
+// Улучшенная функция для choose с защитой от дублирования
 function playChooseSound() {
+    // ИСПРАВЛЕНИЕ 4: Защита от дублирования звука choose
+    const now = Date.now();
+    if (state.isChoosePlaying && (now - state.lastPlayTime['choose'] < 100)) {
+        console.log('choose звук уже воспроизводится, пропускаем');
+        return false;
+    }
+    
     if (!state.audioInitialized) {
         unlockAudioSystem().then(() => {
             setTimeout(playChooseSound, 100);
@@ -614,8 +655,13 @@ function playChooseSound() {
         return false;
     }
     
+    state.isChoosePlaying = true;
+    
     // Пробуем основной звук
-    if (playSound('choose', 0, true)) {
+    if (playSound('choose', 0, true, state.volumes.choose)) {
+        setTimeout(() => {
+            state.isChoosePlaying = false;
+        }, 300);
         return true;
     }
     
@@ -627,6 +673,10 @@ function playChooseSound() {
         return true;
     }
     
+    setTimeout(() => {
+        state.isChoosePlaying = false;
+    }, 300);
+    
     return false;
 }
 
@@ -636,13 +686,14 @@ function actuallyPlayChooseSound() {
     
     // Ищем доступный экземпляр
     for (const instance of state.chooseSoundInstances) {
-        if (!instance.isPlaying && (now - instance.lastPlayTime > (state.isSafari ? 100 : 50))) {
+        if (!instance.isPlaying && (now - instance.lastPlayTime > (state.isSafari ? 150 : 80))) {
             availableInstance = instance;
             break;
         }
     }
     
     if (!availableInstance) {
+        // Берем самый старый по времени воспроизведения
         availableInstance = state.chooseSoundInstances.reduce((oldest, current) => {
             return current.lastPlayTime < oldest.lastPlayTime ? current : oldest;
         });
@@ -651,13 +702,13 @@ function actuallyPlayChooseSound() {
     try {
         const sound = availableInstance.sound;
         
-        // Safari проверки
-        if (state.isSafari && !sound.paused) {
+        // Проверяем, не воспроизводится ли уже
+        if (!sound.paused) {
             return false;
         }
         
         sound.currentTime = 0;
-        sound.volume = 1.0;
+        sound.volume = state.volumes.choose;
         
         if (state.isSafari || state.isIOS) {
             sound.setAttribute('playsinline', 'true');
@@ -677,19 +728,29 @@ function actuallyPlayChooseSound() {
         
         setTimeout(() => {
             availableInstance.isPlaying = false;
+            state.isChoosePlaying = false;
         }, 300);
         
         return true;
     } catch (error) {
         console.warn('Ошибка choose экземпляра:', error);
         availableInstance.isPlaying = false;
+        state.isChoosePlaying = false;
         return false;
     }
 }
 
-// Улучшенная функция для timer
+// Улучшенная функция для timer с защитой от дублирования и обрезания
 function playTimerSound(number) {
+    // ИСПРАВЛЕНИЕ 4: Защита от дублирования звука timer
     if (number < 0) return;
+    
+    // Проверяем, не воспроизводится ли уже этот номер таймера
+    const now = Date.now();
+    if (state.lastTimerNumber === number && (now - state.lastPlayTime['timer'] < 800)) {
+        console.log(`Таймер ${number} уже воспроизводится, пропускаем`);
+        return;
+    }
     
     if (!state.audioInitialized) {
         unlockAudioSystem().then(() => {
@@ -698,14 +759,20 @@ function playTimerSound(number) {
         return;
     }
     
+    state.lastTimerNumber = number;
+    state.isTimerPlaying = true;
+    
     addToSoundQueue(`timer_${number}`, () => {
         actuallyPlayTimerSound(number);
     }, true);
 }
 
 function actuallyPlayTimerSound(number) {
-    // Пробуем основной звук
-    if (playSound('timer', 0, true)) {
+    // Пробуем основной звук с увеличенной громкостью
+    if (playSound('timer', 0, true, state.volumes.timer)) {
+        setTimeout(() => {
+            state.isTimerPlaying = false;
+        }, 500);
         return;
     }
     
@@ -720,13 +787,14 @@ function actuallyPlayTimerSound(number) {
                 const now = Date.now();
                 const sound = timerInstance.sound;
                 
-                // Safari проверки
-                if (state.isSafari && (now - timerInstance.lastPlayTime < 100 || !sound.paused)) {
+                // Проверяем, не воспроизводится ли уже
+                if (now - timerInstance.lastPlayTime < 800 || !sound.paused) {
+                    state.isTimerPlaying = false;
                     return;
                 }
                 
                 sound.currentTime = 0;
-                sound.volume = 1.0;
+                sound.volume = state.volumes.timer;
                 
                 if (state.isSafari || state.isIOS) {
                     sound.setAttribute('playsinline', 'true');
@@ -742,11 +810,13 @@ function actuallyPlayTimerSound(number) {
                 }).catch(error => {
                     console.warn(`Таймер ${number} ошибка:`, error);
                     timerInstance.isPlaying = false;
+                    state.isTimerPlaying = false;
                 });
                 
                 setTimeout(() => {
                     timerInstance.isPlaying = false;
-                }, 300);
+                    state.isTimerPlaying = false;
+                }, 500);
                 
                 return;
             }
@@ -755,7 +825,7 @@ function actuallyPlayTimerSound(number) {
         // Последняя попытка
         if (state.audioInitialized) {
             const newSound = new Audio('sounds/timer.mp3');
-            newSound.volume = 1.0;
+            newSound.volume = state.volumes.timer;
             
             if (state.isSafari || state.isIOS) {
                 newSound.setAttribute('playsinline', 'true');
@@ -764,10 +834,12 @@ function actuallyPlayTimerSound(number) {
             
             newSound.play().catch(() => {});
             state.lastPlayTime['timer'] = Date.now();
+            state.isTimerPlaying = false;
         }
         
     } catch (error) {
         console.warn('Ошибка таймера:', error);
+        state.isTimerPlaying = false;
     }
 }
 
@@ -867,6 +939,9 @@ function startIdle() {
     state.resultScreenVisible = false;
     state.changeSoundPlayed = false;
     state.startSoundPlayed = false;
+    state.lastSelectTime = 0; // Сбрасываем таймеры
+    state.lastStartTime = 0;
+    state.lastResetTime = 0;
     
     createRandomOrder();
     
@@ -962,10 +1037,16 @@ function animateTimerChange(timerNumber) {
     }
 }
 
-// Начало игры - ИСПРАВЛЕНО: используем приоритетные звуки
+// Начало игры - ИСПРАВЛЕНО: защита от спама
 function startGame() {
-    if (state.startBtnLock) return;
+    // ИСПРАВЛЕНИЕ 1: Защита от спама по кнопке
+    const now = Date.now();
+    if (state.startBtnLock || (now - state.lastStartTime < state.startCooldown)) {
+        console.log('Кнопка start заблокирована, попробуйте позже');
+        return;
+    }
     
+    state.lastStartTime = now;
     state.startBtnLock = true;
     elements.startBtn.disabled = true;
     elements.startBtn.style.pointerEvents = 'none';
@@ -975,10 +1056,10 @@ function startGame() {
     state.gamePhase = 'creating';
     state.changeSoundPlayed = false;
     
-    // Воспроизводим звук начала игры С ПРИОРИТЕТОМ
+    // Воспроизводим звук начала игры
     if (!state.startSoundPlayed) {
         state.startSoundPlayed = true;
-        playSound('start', 0, true); // true = high priority
+        playStartSound();
     }
     
     stopIdle();
@@ -1014,7 +1095,7 @@ function startGame() {
             
             // Используем приоритетный звук для change (result.mp3)
             if (!state.changeSoundPlayed) {
-                playChangeSound(); // Используем специальную функцию
+                playChangeSound();
                 state.changeSoundPlayed = true;
             }
             
@@ -1098,6 +1179,7 @@ function startSelecting() {
     state.isBusy = false;
     state.isFirstChangeInCycle = true;
     state.canPressSpace = false;
+    state.lastSelectTime = 0; // Сбрасываем таймер
 
     elements.instruction.classList.remove('show');
     
@@ -1172,12 +1254,16 @@ function getLabel(t) {
     }[t]; 
 }
 
-// Обработка выбора игрока
+// Обработка выбора игрока - ИСПРАВЛЕНО: защита от спама
 function select() {
-    if (!state.canSelect || state.gamePhase !== 'selecting') {
+    // ИСПРАВЛЕНИЕ 1: Защита от спама по кнопке
+    const now = Date.now();
+    if (!state.canSelect || state.gamePhase !== 'selecting' || (now - state.lastSelectTime < state.selectCooldown)) {
+        console.log('Кнопка select заблокирована, попробуйте позже');
         return false;
     }
     
+    state.lastSelectTime = now;
     playChooseSound();
     
     state.canSelect = false;
@@ -1265,11 +1351,11 @@ function finish() {
         
         // Воспроизводим звуки результатов С ПРИОРИТЕТОМ
         if (p === 100) {
-            playSound('victory', 0, true); // high priority
+            playSound('victory', 0, true, state.volumes.victory);
         } else if (p >= 75) {
-            playSound('vic', 0, true); // high priority
+            playSound('vic', 0, true, state.volumes.vic);
         } else {
-            playSound('loss', 0, true); // high priority
+            playSound('loss', 0, true, state.volumes.loss);
         }
         
         if (tg && tg.sendData) {
@@ -1284,9 +1370,16 @@ function finish() {
     }, 400);
 }
 
-// Сброс игры - ИСПРАВЛЕНО: используем специальную функцию для repeat
+// Сброс игры - ИСПРАВЛЕНО: защита от спама
 function reset() {
-    if (state.resetBtnLock || state.isBusy) return;
+    // ИСПРАВЛЕНИЕ 1: Защита от спама по кнопке
+    const now = Date.now();
+    if (state.resetBtnLock || state.isBusy || (now - state.lastResetTime < state.resetCooldown)) {
+        console.log('Кнопка reset заблокирована, попробуйте позже');
+        return;
+    }
+    
+    state.lastResetTime = now;
     
     // Используем специальную функцию для repeat звука
     playRepeatSound();
@@ -1375,11 +1468,14 @@ window.addEventListener('keydown', function(e) {
         
         ensureAudio();
         
-        if (state.gamePhase === 'idle' && !state.startBtnLock) {
+        // Применяем ту же защиту от спама для пробела
+        const now = Date.now();
+        
+        if (state.gamePhase === 'idle' && !state.startBtnLock && (now - state.lastStartTime >= state.startCooldown)) {
             startGame();
-        } else if (state.gamePhase === 'selecting' && state.canSelect) {
+        } else if (state.gamePhase === 'selecting' && state.canSelect && (now - state.lastSelectTime >= state.selectCooldown)) {
             select();
-        } else if (state.gamePhase === 'finished' && !state.resetBtnLock && state.resultScreenVisible) {
+        } else if (state.gamePhase === 'finished' && !state.resetBtnLock && state.resultScreenVisible && (now - state.lastResetTime >= state.resetCooldown)) {
             reset();
         }
     }
@@ -1400,20 +1496,36 @@ document.addEventListener('touchend', function(e) {
     }
 }, { passive: true });
 
-// Назначение обработчиков событий для кнопок
+// Назначение обработчиков событий для кнопок с защитой от спама
 elements.startBtn.onclick = function() {
-    if (state.startBtnLock) return;
+    // Применяем ту же защиту от спама
+    const now = Date.now();
+    if (state.startBtnLock || (now - state.lastStartTime < state.startCooldown)) {
+        return;
+    }
     
     ensureAudio();
     startGame();
 };
 
 elements.selectBtn.onclick = function() {
+    // Применяем ту же защиту от спама
+    const now = Date.now();
+    if (!state.canSelect || state.gamePhase !== 'selecting' || (now - state.lastSelectTime < state.selectCooldown)) {
+        return;
+    }
+    
     ensureAudio();
     select();
 };
 
 elements.resultAgainBtn.onclick = function() {
+    // Применяем ту же защиту от спама
+    const now = Date.now();
+    if (state.resetBtnLock || state.isBusy || (now - state.lastResetTime < state.resetCooldown)) {
+        return;
+    }
+    
     ensureAudio();
     reset();
 };
