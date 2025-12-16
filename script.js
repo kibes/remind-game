@@ -2,12 +2,9 @@
 // CONFIGURATION & SUPABASE
 // ============================
 
-// Вставь сюда свои ключи из Supabase Dashboard
 const SUPABASE_URL = 'https://lmlgnsthwwvcczoatoag.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_PQiqm6aI8DcfGYXog73idg_O9dWKx_R';
 
-// Инициализация клиента Supabase
-// (Предполагается, что библиотека подключена через CDN в HTML)
 let supabaseClient = null;
 if (window.supabase && window.supabase.createClient) {
     supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -27,12 +24,11 @@ if (window.Telegram && window.Telegram.WebApp) {
 // GAME STATE
 // ============================
 
-// Основной объект состояния игры
 const state = {
     round: 1,
     maxStreak: 0,
     streak: 0,
-    gameCount: 0, // НОВОЕ: Счетчик сыгранных игр
+    // УБРАНО: gameCount здесь больше нет
     target: {},
     selection: {},
     parts: ['skin', 'head', 'body', 'accessory'],
@@ -54,11 +50,9 @@ const state = {
     userInteracted: false,
     isButtonReady: false, 
 
-    // Определение платформы
     isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream,
     isTelegramWebApp: window.Telegram && window.Telegram.WebApp,
 
-    // Аудио система
     audioContext: null,
     audioBuffers: {},
     soundsLoaded: false,
@@ -86,7 +80,7 @@ const elements = {
     resultPlayer: document.getElementById('result-player')
 };
 
-// ИСПРАВЛЕНИЕ TWA: Принудительная изоляция слоев
+// ИСПРАВЛЕНИЕ TWA
 if (elements.characterDisplay) {
     elements.characterDisplay.style.isolation = 'isolate';
     elements.characterDisplay.style.webkitIsolation = 'isolate';
@@ -109,26 +103,26 @@ function setInstructionText(text, immediate = false) {
 }
 
 // ============================
-// DATABASE FUNCTIONS
+// DATABASE FUNCTIONS (ИСПРАВЛЕННЫЕ)
 // ============================
 
-// Загрузка данных игрока при старте
 async function loadPlayerData() {
     if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) {
-        console.log('Skipping DB load: Not in Telegram or Supabase not configured');
+        console.log('Skipping DB load: Not in Telegram');
         return;
     }
 
     const userId = tg.initDataUnsafe.user.id;
 
     try {
+        // Убрали game_count из запроса
         const { data, error } = await supabaseClient
             .from('players')
-            .select('streak, max_streak, game_count')
+            .select('streak, max_streak') 
             .eq('user_id', userId)
             .single();
 
-        if (error && error.code !== 'PGRST116') { // PGRST116 = no rows found
+        if (error && error.code !== 'PGRST116') { 
             console.error('Supabase load error:', error);
             return;
         }
@@ -136,13 +130,10 @@ async function loadPlayerData() {
         if (data) {
             state.streak = data.streak || 0;
             state.maxStreak = data.max_streak || 0;
-            state.gameCount = data.game_count || 0;
             
-            // Обновляем UI сразу после загрузки данных
             updateStats();
             console.log('Player data loaded:', data);
         } else {
-            // Новый пользователь
             console.log('New player detected');
         }
     } catch (e) {
@@ -150,18 +141,18 @@ async function loadPlayerData() {
     }
 }
 
-// Сохранение прогресса
 async function savePlayerData() {
     if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
 
     const user = tg.initDataUnsafe.user;
     
+    // СТРОГОЕ СООТВЕТСТВИЕ НОВОЙ ТАБЛИЦЕ
     const playerData = {
         user_id: user.id,
         username: user.username || user.first_name || 'Unknown',
         streak: state.streak,
         max_streak: state.maxStreak,
-        game_count: state.gameCount
+        updated_at: new Date() // Обновляем дату вручную, если в базе нет триггера
     };
 
     try {
@@ -170,14 +161,14 @@ async function savePlayerData() {
             .upsert(playerData, { onConflict: 'user_id' });
 
         if (error) console.error('Supabase save error:', error);
-        else console.log('Progress saved');
+        else console.log('Progress saved successfully');
     } catch (e) {
         console.error('Unexpected error saving data:', e);
     }
 }
 
 // ============================
-// AUDIO SYSTEM (Web Audio API)
+// AUDIO SYSTEM
 // ============================
 
 const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -256,7 +247,6 @@ const playChangeSound = () => playSound('change');
 const playNextSound = () => playSound('next'); 
 const playTimerSound = (num) => { if(num >= 0) playSound('timer'); }; 
 
-
 // ============================
 // GAME LOGIC
 // ============================
@@ -291,48 +281,35 @@ function updateLoadingUI() {
         progressPercent = Math.round((loadedWorkloadUnits / totalWorkloadUnits) * 100);
     }
     
-    if (imgStatus.allLoaded && !state.soundsLoaded) {
-        progressPercent = 99;
-    }
-    if (everythingLoaded) {
-        progressPercent = 100;
-    }
+    if (imgStatus.allLoaded && !state.soundsLoaded) progressPercent = 99;
+    if (everythingLoaded) progressPercent = 100;
 
     if (!everythingLoaded) {
         const progressText = `Загрузка... ${progressPercent}%`;
         if (elements.instruction.textContent !== progressText) {
             elements.instruction.textContent = progressText;
+            elements.instruction.classList.add('show');
         }
         
-        elements.startBtn.classList.add('hidden');
-        elements.startBtn.disabled = true;
-        elements.startBtn.style.opacity = '0'; 
-        state.isButtonReady = false;
-        
+        // Повторная проверка
         setTimeout(updateLoadingUI, 500);
     } else {
         if (!state.imagesLoaded) {
             state.imagesLoaded = true;
             
+            // Загрузка завершена: теперь показываем интерфейс
             setInstructionText("Начнём?"); 
 
-            elements.gameArea.style.opacity = '1';
-            elements.gameArea.style.visibility = 'visible'; 
+            // Показываем игровую область (которая была скрыта в CSS)
+            if (elements.gameArea) {
+                elements.gameArea.classList.add('loaded');
+            }
             
-            elements.startBtn.classList.remove('hidden');
-            elements.startBtn.style.opacity = '0';
-            
-            setTimeout(() => {
-                elements.startBtn.style.transition = 'opacity 0.3s ease';
-                elements.startBtn.style.opacity = '1';
-                elements.startBtn.disabled = false;
-                elements.startBtn.style.pointerEvents = 'auto';
-                
-                setTimeout(() => {
-                    elements.startBtn.style.transition = '';
-                    state.isButtonReady = true; 
-                }, 300);
-            }, 100);
+            // Показываем кнопку старта (которая была скрыта в CSS по ID)
+            if (elements.startBtn) {
+                elements.startBtn.classList.add('ready');
+                state.isButtonReady = true; 
+            }
             
             if (state.gamePhase === 'idle') {
                 startIdleAnimation();
@@ -488,7 +465,9 @@ function startIdle() {
 }
 
 function startIdleAnimation() {
-    elements.instruction.classList.add('show');
+    if (elements.instruction.textContent === "Начнём?") {
+        elements.instruction.classList.add('show');
+    }
     
     state.parts.forEach(p => {
         const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
@@ -528,6 +507,23 @@ function stopIdle() {
 
 function hideButtonWithAnimation(button) {
     if (!button || button.classList.contains('hidden')) return;
+    
+    // Специальная логика для стартовой кнопки, управляемой через ID
+    if (button.id === 'start-btn') {
+        button.style.transition = 'all 0.2s ease';
+        button.style.opacity = '0';
+        button.style.transform = 'scale(0.8)';
+        setTimeout(() => {
+            button.classList.remove('ready'); // Убираем класс показа
+            button.style.display = ''; // Сбрасываем инлайн стиль
+            // Теперь работает #start-btn { display: none } из CSS
+            button.style.transition = '';
+            button.style.opacity = '';
+            button.style.transform = '';
+        }, 200);
+        return;
+    }
+
     button.style.transition = 'all 0.2s ease';
     button.style.opacity = '0';
     button.style.transform = 'scale(0.8)';
@@ -560,9 +556,8 @@ function startGame() {
     state.startBtnLock = true;
     state.isButtonReady = false;
     
-    if (elements.startBtn && !elements.startBtn.classList.contains('hidden')) {
-        hideButtonWithAnimation(elements.startBtn);
-    }
+    // Скрываем кнопку старта
+    hideButtonWithAnimation(elements.startBtn);
     
     state.isBusy = true;
     state.gamePhase = 'creating';
@@ -722,7 +717,10 @@ function finish() {
     state.resultScreenVisible = false;
     
     if (state.interval) { clearInterval(state.interval); state.interval = null; }
-    elements.gameArea.classList.add('hidden');
+    
+    // Скрываем игровую область через класс
+    elements.gameArea.classList.remove('loaded'); // Станет opacity: 0
+    // elements.gameArea.classList.add('hidden'); // Можно так, но у нас есть CSS логика
     
     setTimeout(() => {
         let m = 0;
@@ -731,8 +729,7 @@ function finish() {
         });
         const p = Math.round((m/4)*100);
         
-        // Увеличиваем счетчик игр
-        state.gameCount++;
+        // Убрали state.gameCount++
 
         // Логика стрика и результата
         if (p === 100) { 
@@ -748,7 +745,7 @@ function finish() {
         // Обновляем рекорд
         if (state.streak > state.maxStreak) state.maxStreak = state.streak;
         
-        // СОХРАНЕНИЕ ДАННЫХ В SUPABASE
+        // СОХРАНЕНИЕ ДАННЫХ В SUPABASE (Теперь без game_count)
         savePlayerData();
 
         elements.resultPercent.textContent = p + '%';
@@ -823,9 +820,8 @@ function reset() {
         elements.resultTarget.innerHTML = '';
         elements.resultPlayer.innerHTML = '';
         
-        elements.startBtn.classList.remove('hidden');
-        elements.startBtn.style.opacity = '1';
-        elements.startBtn.style.transform = 'scale(1)';
+        // Показываем кнопку старта (через класс ready)
+        elements.startBtn.classList.add('ready');
         elements.startBtn.disabled = false;
         elements.startBtn.style.pointerEvents = 'auto';
         
@@ -836,9 +832,8 @@ function reset() {
         elements.selectBtn.classList.remove('show');
         elements.selectBtn.classList.add('hidden');
         
-        elements.gameArea.classList.remove('hidden');
-        elements.gameArea.style.opacity = '1';
-        elements.gameArea.style.visibility = 'visible';
+        // Показываем игровую зону
+        elements.gameArea.classList.add('loaded');
         
         updateStats();
         
@@ -885,21 +880,16 @@ document.addEventListener('selectstart', e => { e.preventDefault(); return false
 document.addEventListener('contextmenu', e => { e.preventDefault(); return false; });
 
 window.onload = async () => {
-    // 1. Мгновенное отображение надписи "Загрузка..."
+    // 1. Убеждаемся, что кнопка старта скрыта (она скрыта в CSS по ID, но на всякий случай)
+    // 2. Убеждаемся, что игровая зона скрыта (она скрыта в CSS классом .game-content)
+    
     if (elements.instruction) {
         setInstructionText("Загрузка... 0%", true); 
-    }
-    
-    // 2. Скрываем кнопку старта сразу при загрузке
-    if (elements.startBtn) {
-        elements.startBtn.classList.add('hidden');
-        elements.startBtn.disabled = true;
     }
     
     initAudioSystem();
     
     try {
-        // Параллельная загрузка ресурсов и данных игрока
         const loadPromises = [
             loadImages(),
             loadPlayerData()

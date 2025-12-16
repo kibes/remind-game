@@ -30,14 +30,11 @@ body {
     margin: 0; 
     padding: 0; 
     box-sizing: border-box; 
-    
-    /* ТОЛЬКО ЭТИ ОПТИМИЗАЦИИ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ */
-    -webkit-tap-highlight-color: transparent; /* Убирает задержку при тапе */
-    backface-visibility: hidden; /* Улучшает анимации */
-    -webkit-font-smoothing: antialiased; /* Улучшает рендеринг шрифтов */
+    -webkit-tap-highlight-color: transparent;
+    backface-visibility: hidden;
+    -webkit-font-smoothing: antialiased;
 }
 
-/* Основной фон и центрирование */
 body {
     font-family: 'Segoe UI', Arial, sans-serif;
     background: #db4e4e;
@@ -46,15 +43,12 @@ body {
     align-items: center;
     min-height: 100vh;
     padding: 10px;
-    
-    /* ОПТИМИЗАЦИЯ ДЛЯ МОБИЛЬНЫХ */
-    overflow: hidden; /* Предотвращает скролл */
-    position: fixed; /* Фиксирует viewport */
+    overflow: hidden;
+    position: fixed;
     width: 100%;
     height: 100vh;
 }
 
-/* Основной контейнер игры - БЕЗ ИЗМЕНЕНИЙ РАЗМЕРОВ */
 .game-container {
     width: 100%;
     max-width: 100%;
@@ -70,13 +64,10 @@ body {
     overflow: hidden;
     max-width: 800px;
     max-height: 800px;
-    
-    /* УСКОРЕНИЕ РЕНДЕРИНГА */
     will-change: transform;
-    transform: translateZ(0); /* Аппаратное ускорение */
+    transform: translateZ(0);
 }
 
-/* Заголовок и Статистика - БЕЗ ИЗМЕНЕНИЙ */
 .header { 
     text-align: center; 
     font-family: 'Montserrat', sans-serif;
@@ -110,7 +101,7 @@ h1 {
     font-size: 24px; 
     font-weight: 700;
     color: #333; 
-    transition: transform 0.3s ease; /* Оптимизирован transition */
+    transition: transform 0.3s ease; 
 }
 
 .stat-value.updating { 
@@ -118,21 +109,22 @@ h1 {
     color: #db4e4e; 
 }
 
-/* Игровая область */
+/* Игровая область - СКРЫТА ПО УМОЛЧАНИЮ */
 .game-content {
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
+    /* Скрываем контент визуально, но оставляем место */
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.5s ease;
+}
+
+/* Когда всё загружено — плавно показываем */
+.game-content.loaded {
     opacity: 1;
-    visibility: visible;
-    
-    /* ОПТИМИЗИРОВАННЫЕ TRANSITION */
-    transition: opacity 0.4s ease, visibility 0.4s ease;
-    min-height: 0;
-    
-    /* АППАРАТНОЕ УСКОРЕНИЕ */
-    transform: translateZ(0);
+    pointer-events: auto;
 }
 
 .game-content.hidden { 
@@ -141,7 +133,6 @@ h1 {
     visibility: hidden; 
 }
 
-/* Область отображения персонажа */
 .character-display {
     width: 100%;
     max-width: 380px;
@@ -153,9 +144,7 @@ h1 {
     border-radius: 30px;
     background: #fff;
     overflow: hidden;
-    
-    /* УСКОРЕНИЕ РЕНДЕРИНГА */
-    contain: layout style paint; /* Оптимизация для браузера */
+    contain: layout style paint;
     will-change: transform;
 }
 
@@ -174,12 +163,9 @@ h1 {
     background-size: contain; 
     background-repeat: no-repeat; 
     background-position: center bottom;
-    
-    /* ОПТИМИЗАЦИЯ АНИМАЦИЙ */
     will-change: transform, opacity;
 }
 
-/* Информационная секция */
 .info-section {
     height: 120px;
     display: flex;
@@ -201,16 +187,12 @@ h1 {
     font-weight: 600;
     opacity: 0; 
     transform: translateY(10px);
-    
-    /* ОПТИМИЗИРОВАННАЯ АНИМАЦИЯ */
     transition: opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
                 transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     min-height: 26px;
     margin-top: 10px;
     flex: 0 0 auto;
     white-space: nowrap;
-    
-    /* ПРЕДОТВРАЩЕНИЕ СКАЧКОВ ТЕКСТА */
     backface-visibility: hidden;
 }
 
@@ -219,7 +201,6 @@ h1 {
     transform: translateY(0); 
 }
 
-/* Таймер */
 .timer { 
     font-size: 100px;
     font-weight: 800;
@@ -233,15 +214,11 @@ h1 {
     display: flex;
     align-items: center;
     justify-content: center;
-    
-    /* БЫСТРЫЙ TRANSITION */
     transition: opacity 0.3s ease;
     pointer-events: none;
     z-index: 5;
     font-family: 'Montserrat', sans-serif;
     text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
-    
-    /* ОПТИМИЗАЦИЯ */
     will-change: opacity;
 }
 
@@ -256,27 +233,15 @@ h1 {
 
 .timer-digit.changing {
     animation: timerChange 0.3s ease;
-    
-    /* УСКОРЕНИЕ АНИМАЦИИ */
     backface-visibility: hidden;
 }
 
 @keyframes timerChange {
-    0% {
-        transform: scale(1);
-        opacity: 1;
-    }
-    50% {
-        transform: scale(1.1);
-        opacity: 0.9;
-    }
-    100% {
-        transform: scale(1);
-        opacity: 1;
-    }
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.1); opacity: 0.9; }
+    100% { transform: scale(1); opacity: 1; }
 }
 
-/* Управление (кнопки) */
 .controls-container {
     height: 60px;
     display: flex;
@@ -299,22 +264,15 @@ h1 {
     border-radius: 30px;
     cursor: pointer;
     font-weight: 600;
-    
-    /* ОПТИМИЗИРОВАННЫЕ АНИМАЦИИ */
     transition: background-color 0.2s ease, 
                 transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     margin-bottom: 150px;
     opacity: 1;
     transform: scale(1);
     font-family: 'Montserrat', sans-serif;
-    font-weight: 600;
     white-space: nowrap;
-    
-    /* УЛУЧШЕНИЕ ДЛЯ TOUCH */
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
-    
-    /* ПРЕДОТВРАЩЕНИЕ МЕЛЬКАНИЯ */
     backface-visibility: hidden;
 }
 
@@ -325,13 +283,11 @@ h1 {
 
 .btn:active { 
     transform: translateY(0) scale(0.99); 
-    transition-duration: 0.05s; /* Быстрая анимация нажатия */
+    transition-duration: 0.05s;
 }
 
 .btn.hidden { 
     display: none; 
-    opacity: 0;
-    transform: scale(0.8);
 }
 
 .btn.show { 
@@ -339,18 +295,26 @@ h1 {
     animation: buttonAppear 0.2s ease forwards;
 }
 
-@keyframes buttonAppear {
-    0% {
-        opacity: 0;
-        transform: scale(0.8);
-    }
-    100% {
-        opacity: 1;
-        transform: scale(1);
-    }
+/* НОВОЕ ПРАВИЛО: Кнопка старта скрыта по ID по умолчанию */
+#start-btn {
+    opacity: 0;
+    transform: scale(0.8);
+    pointer-events: none;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* НОВЫЙ ЭКРАН РЕЗУЛЬТАТОВ */
+/* Кнопка старта - показываем, когда JS даст добро */
+#start-btn.ready {
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
+}
+
+@keyframes buttonAppear {
+    0% { opacity: 0; transform: scale(0.8); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
 .result-screen {
     position: absolute;
     top: 120px;
@@ -362,16 +326,12 @@ h1 {
     flex-direction: column;
     opacity: 0;
     visibility: hidden;
-    
-    /* БЫСТРЫЕ TRANSITION */
     transition: opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
                 visibility 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     background: white;
     z-index: 20;
     overflow: hidden;
     justify-content: space-between;
-    
-    /* АППАРАТНОЕ УСКОРЕНИЕ */
     transform: translateZ(0);
 }
 
@@ -380,7 +340,6 @@ h1 {
     visibility: visible; 
 }
 
-/* Контейнер для сравнения персонажей */
 .result-comparison {
     display: flex;
     width: 100%;
@@ -393,7 +352,6 @@ h1 {
     max-height: 60%;
 }
 
-/* Карточка персонажа в результатах */
 .result-character-card {
     flex: 1;
     display: flex;
@@ -405,7 +363,6 @@ h1 {
     min-height: 100px;
 }
 
-/* Отображение персонажа в результатах */
 .result-character-display {
     width: 100%;
     height: 100%;
@@ -417,42 +374,34 @@ h1 {
     margin-bottom: 8px;
     max-height: 180px;
     min-height: 140px;
-    
-    /* УСКОРЕНИЕ */
     contain: layout style paint;
 }
 
-/* Горизонтальное расположение для широких экранов */
 @media (min-width: 500px) {
     .result-comparison {
         flex-direction: row;
         min-height: 200px;
         max-height: 70%;
     }
-
     .result-character-display {
         max-height: 400px;
         min-height: 180px;
     }
-    
     .result-character-card {
         max-width: 320px;
     }
 }
 
-/* Вертикальное расположение для узких экранов */
 @media (max-width: 499px) {
     .result-comparison {
         flex-direction: column;
         max-height: none;
         gap: 10px;
     }
-
     .result-character-display {
         max-height: none;
         min-height: 0;
     }
-    
     .result-character-card {
         width: 100%;
         min-height: 75px;
@@ -468,10 +417,8 @@ h1 {
     text-transform: lowercase;
     flex-shrink: 0;
     font-family: 'Montserrat', sans-serif;
-    font-weight: 500;
 }
 
-/* Информационная часть результатов */
 .result-info {
     display: flex;
     flex-direction: column;
@@ -504,7 +451,6 @@ h1 {
     min-height: 30px;
 }
 
-/* Кнопка в результатах */
 .result-controls-container {
     display: flex;
     justify-content: center;
@@ -523,8 +469,6 @@ h1 {
     border-radius: 30px;
     cursor: pointer;
     font-weight: 600;
-    
-    /* ОПТИМИЗИРОВАННЫЕ АНИМАЦИИ */
     transition: background-color 0.2s ease, 
                 transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     opacity: 1;
@@ -534,9 +478,6 @@ h1 {
     align-items: center;
     justify-content: center;
     font-family: 'Montserrat', sans-serif;
-    font-weight: 600;
-    
-    /* УЛУЧШЕНИЕ ДЛЯ TOUCH */
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
     backface-visibility: hidden;
@@ -552,21 +493,11 @@ h1 {
     transition-duration: 0.05s;
 }
 
-/* ОПТИМИЗАЦИЯ ДЛЯ TELEGRAM И МОБИЛЬНЫХ */
 @media (hover: none) {
-    .btn:hover, .result-btn:hover {
-        transform: none !important; /* Отключаем hover эффекты на touch устройствах */
-    }
-    
-    .btn:active, .result-btn:active {
-        transform: scale(0.97) !important;
-        transition-duration: 0.1s;
-    }
+    .btn:hover, .result-btn:hover { transform: none !important; }
+    .btn:active, .result-btn:active { transform: scale(0.97) !important; transition-duration: 0.1s; }
 }
 
-/* ПРЕДОТВРАЩЕНИЕ ЗУМА НА IOS */
 @media (pointer: coarse) {
-    input, textarea, button, select {
-        font-size: 16px; /* Предотвращает автоматический зум на iOS */
-    }
+    input, textarea, button, select { font-size: 16px; }
 }
