@@ -63,7 +63,9 @@ const state = {
     soundsLoaded: false,
     audioUnlocked: false,
     
-    imagesLoaded: false
+    // Флаги загрузки
+    imagesLoaded: false, // Глобальный флаг, когда Promise.all завершен
+    resourcesReady: false // Когда готовы и картинки, и звуки
 };
 
 // Ссылки на DOM элементы
@@ -98,7 +100,7 @@ function setInstructionText(text, immediate = false) {
         instruction.classList.add('show');
         return;
     }
-    // Плавная анимация
+    // Плавная анимация (исчезновение -> смена текста -> появление)
     instruction.classList.remove('show');
     setTimeout(() => {
         instruction.textContent = text;
@@ -220,20 +222,19 @@ async function loadPlayerData() {
     updateStats();
 }
 
-// FIX 4: Новая функция для сброса серии на сервере (Anti-Cheat)
+// FIX: Новая функция для сброса серии на сервере (Anti-Cheat)
 async function resetStreakOnServer() {
     if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
     
-    // Мы отправляем 0 на сервер, но НЕ меняем state.streak локально,
-    // чтобы сохранить серию для следующего вычисления результата.
     const user_id = tg.initDataUnsafe.user.id;
     
+    // Сбрасываем только на сервере, локально оставляем для UI
     await supabaseClient
         .from('players')
         .update({ streak: 0 })
         .eq('user_id', user_id);
         
-    console.log('Anti-cheat: Streak staked at 0 on server');
+    console.log('Anti-cheat: Streak staked at 0 on server (game phase started)');
 }
 
 async function savePlayerData() {
@@ -277,51 +278,23 @@ async function savePlayerData() {
 // GAME LOGIC
 // ============================
 
-function checkImagesLoaded() {
-    let allLoaded = true;
-    let loadedCount = 0;
-    let totalCount = 0;
-    
-    for (const type of state.parts) totalCount += state.partCounts[type];
-    
-    for (const type of state.parts) {
-        if (!state.loaded[type]) { allLoaded = false; continue; }
-        for (const item of state.loaded[type]) {
-            if (item && item.img && item.img.complete && item.img.naturalWidth !== 0) loadedCount++;
-            else allLoaded = false;
-        }
-    }
-    return { allLoaded, loadedCount, totalCount };
-}
-
+// FIX: Убрана ненадежная проверка naturalWidth, которая вешала игру на Desktop
+// Мы доверяем Promise.all в loadImages.
 function updateLoadingUI() {
-    const imgStatus = checkImagesLoaded();
-    const everythingLoaded = imgStatus.allLoaded && state.soundsLoaded;
-    
-    const totalWorkloadUnits = 27; 
-    const loadedSoundUnit = state.soundsLoaded ? 1 : 0; 
-    const loadedWorkloadUnits = imgStatus.loadedCount + loadedSoundUnit;
-    
-    let progressPercent = 0;
-    if (totalWorkloadUnits > 0) {
-        progressPercent = Math.round((loadedWorkloadUnits / totalWorkloadUnits) * 100);
-    }
-    
-    if (imgStatus.allLoaded && !state.soundsLoaded) {
-        progressPercent = 99;
-    }
-    if (everythingLoaded) {
-        progressPercent = 100;
-    }
+    // Если уже все готово, выходим (чтобы не зацикливаться)
+    if (state.resourcesReady) return;
 
-    if (!everythingLoaded) {
+    // Считаем прогресс (упрощенно, так как загрузка теперь асинхронная)
+    let progressPercent = 0;
+    if (state.imagesLoaded && !state.soundsLoaded) progressPercent = 80;
+    else if (state.imagesLoaded && state.soundsLoaded) progressPercent = 100;
+    else progressPercent = 10; // Просто стартовое значение
+    
+    if (progressPercent < 100) {
         const progressText = `Загрузка... ${progressPercent}%`;
-        // FIX 3: Обновляем текст загрузки без анимации скрытия, 
-        // чтобы цифры просто менялись. Используем immediate=true или прямой доступ
+        // FIX: Используем immediate=true для обновления цифр, чтобы они не мерцали
         if (elements.instruction.textContent !== progressText) {
-            // Прямая замена текста для загрузчика (без fade out)
-            elements.instruction.textContent = progressText;
-            elements.instruction.classList.add('show'); 
+            setInstructionText(progressText, true);
         }
         
         elements.startBtn.classList.add('hidden');
@@ -329,33 +302,39 @@ function updateLoadingUI() {
         elements.startBtn.style.opacity = '0'; 
         state.isButtonReady = false;
         
-        setTimeout(updateLoadingUI, 500);
-    } else {
-        if (!state.imagesLoaded) {
-            state.imagesLoaded = true;
-            
-            // FIX 3: Теперь вызываем стандартный setInstructionText (без immediate),
-            // чтобы получить красивый FadeOut -> FadeIn переход от "Загрузка 100%" к "Начнём?"
-            setInstructionText("Начнём?"); 
-            
-            elements.startBtn.classList.remove('hidden');
-            elements.startBtn.style.opacity = '0';
+        // Продолжаем проверять, пока флаги не станут true
+        if (!state.imagesLoaded || !state.soundsLoaded) {
+            // Редкий опрос флагов, т.к. они обновятся колбэками
+            return; 
+        }
+    }
+
+    // Если мы здесь, значит всё 100%
+    if (state.imagesLoaded && state.soundsLoaded && !state.resourcesReady) {
+        state.resourcesReady = true;
+        console.log('✓ UI разблокирован');
+
+        // FIX: Красивый переход от "Загрузка 100%" к "Начнём?"
+        // Используем immediate=false (по умолчанию), чтобы сработала CSS анимация
+        setInstructionText("Начнём?"); 
+        
+        elements.startBtn.classList.remove('hidden');
+        elements.startBtn.style.opacity = '0';
+        
+        setTimeout(() => {
+            elements.startBtn.style.transition = 'opacity 0.3s ease';
+            elements.startBtn.style.opacity = '1';
+            elements.startBtn.disabled = false;
+            elements.startBtn.style.pointerEvents = 'auto';
             
             setTimeout(() => {
-                elements.startBtn.style.transition = 'opacity 0.3s ease';
-                elements.startBtn.style.opacity = '1';
-                elements.startBtn.disabled = false;
-                elements.startBtn.style.pointerEvents = 'auto';
-                
-                setTimeout(() => {
-                    elements.startBtn.style.transition = '';
-                    state.isButtonReady = true; 
-                }, 300);
-            }, 100);
-            
-            if (state.gamePhase === 'idle') {
-                startIdleAnimation();
-            }
+                elements.startBtn.style.transition = '';
+                state.isButtonReady = true; 
+            }, 300);
+        }, 100);
+        
+        if (state.gamePhase === 'idle') {
+            startIdleAnimation();
         }
     }
 }
@@ -395,13 +374,15 @@ async function loadImages() {
             const img = new Image();
             img.src = `${folders[type]}${i}.png`;
             loadPromises.push(new Promise(r => { 
-                img.onload = r; 
-                img.onerror = r; 
+                img.onload = () => r(true); 
+                img.onerror = () => { console.warn('Img fail', img.src); r(false); }; 
             }));
             state.loaded[type].push({ id: i, img: img });
         }
         await Promise.all(loadPromises);
     }
+    // FIX: Явно ставим флаг готовности после завершения промисов
+    state.imagesLoaded = true;
     updateLoadingUI();
 }
 
@@ -419,7 +400,6 @@ function render(container, data) {
     container.appendChild(fragment);
 }
 
-// FIX 2: Улучшенная обработка тачей (отмена нажатия при уводе пальца)
 function setupTouchHandlers() {
     const buttons = [elements.startBtn, elements.selectBtn, elements.resultAgainBtn];
     
@@ -447,7 +427,6 @@ function setupTouchHandlers() {
 
             this.style.transform = '';
             
-            // Проверка: находится ли палец всё ещё над кнопкой?
             const touch = e.changedTouches[0];
             const rect = this.getBoundingClientRect();
             const isStillInside = (
@@ -458,7 +437,7 @@ function setupTouchHandlers() {
             );
 
             if (isStillInside) {
-                e.preventDefault(); // Предотвращаем клик мыши, если это тач
+                e.preventDefault(); 
                 
                 if (this === elements.startBtn) handleStartButton();
                 else if (this === elements.selectBtn) handleSelectButton();
@@ -475,9 +454,8 @@ function setupTouchHandlers() {
         }, { passive: true });
     });
     
-    // Оставляем Click для десктопа (но тач-события его часто перехватывают preventDefault выше)
     elements.startBtn.addEventListener('click', (e) => { 
-        if(e.detail === 0) return; // Игнорируем синтетические клики от клавиатуры (Enter)
+        if(e.detail === 0) return; 
         handleStartButton(); 
     });
     elements.selectBtn.addEventListener('click', (e) => { 
@@ -516,33 +494,35 @@ function startIdle() {
     
     createRandomOrder();
     
-    if (!state.imagesLoaded || !state.soundsLoaded) {
+    if (!state.resourcesReady) {
         updateLoadingUI();
         return;
     }
     startIdleAnimation();
 }
 
+// FIX: Исправлена логика первого кадра, чтобы персонаж не дергался и не менял 2 части сразу
 function startIdleAnimation() {
+    // Если картинки еще не прогрузились (на случай быстрого вызова)
+    if (!state.imagesLoaded) return;
+
     elements.instruction.classList.add('show');
     
-    // Инициализация персонажа случайными частями
+    // 1. Сначала генерируем и отрисовываем стартового персонажа
     state.parts.forEach(p => {
         const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
         state.idleCharacter[p] = getRandomOrderItem(p, randomIndex);
     });
     render(elements.characterDisplay, state.idleCharacter);
     
-    // FIX 1: Инициализируем lastTime "будущим", чтобы первый кадр не сработал мгновенно
-    // или устанавливаем флаг isFirstFrame
     let lastTime = 0;
     let partIndex = 0; 
-    let isFirstFrame = true;
+    let isFirstFrame = true; // Флаг для первого запуска цикла
     
     const animateIdle = (timestamp) => {
         if (!state.idleInterval) return;
         
-        // Если это первый запуск, просто запоминаем время и не меняем ничего
+        // FIX: На первом кадре просто запоминаем время, НЕ обновляем персонажа
         if (isFirstFrame) {
             lastTime = timestamp;
             isFirstFrame = false;
@@ -550,6 +530,7 @@ function startIdleAnimation() {
             return;
         }
         
+        // Теперь обновление произойдет ровно через 1000мс после отрисовки
         if (timestamp - lastTime > 1000) { 
             lastTime = timestamp;
             
@@ -618,8 +599,7 @@ function startGame() {
     state.startBtnLock = true;
     state.isButtonReady = false;
     
-    // FIX 4: Сброс стрика на сервере при начале игры
-    resetStreakOnServer();
+    // FIX: Убрали resetStreakOnServer() отсюда, чтобы не сбрасывать при случайном закрытии во время генерации
     
     if (elements.startBtn && !elements.startBtn.classList.contains('hidden')) {
         hideButtonWithAnimation(elements.startBtn);
@@ -705,6 +685,10 @@ function finalizeTarget() {
 }
 
 function startSelecting() {
+    // FIX: Сбрасываем стрик на сервере в 0 именно здесь.
+    // Если игрок закроет игру сейчас (после того как таймер вышел), стрик обнулится.
+    resetStreakOnServer();
+
     state.gamePhase = 'selecting';
     state.currentPart = 0;
     state.selection = {};
@@ -807,7 +791,7 @@ function finish() {
         updateStats();
         
         // --- СОХРАНЕНИЕ ДАННЫХ В БАЗУ ДАННЫХ ---
-        // Здесь мы перезаписываем 0 (который установили в начале игры) на реальный результат
+        // Записываем реальный результат (или 0, если проиграл, или +1 если выиграл)
         savePlayerData();
         // ---------------------------------------
         
@@ -935,12 +919,10 @@ document.addEventListener('selectstart', e => { e.preventDefault(); return false
 document.addEventListener('contextmenu', e => { e.preventDefault(); return false; });
 
 window.onload = async () => {
-    // 1. Мгновенное отображение надписи "Загрузка..."
     if (elements.instruction) {
         setInstructionText("Загрузка... 0%", true); 
     }
     
-    // 2. Скрываем кнопку старта сразу при загрузке
     if (elements.startBtn) {
         elements.startBtn.classList.add('hidden');
         elements.startBtn.disabled = true;
@@ -962,6 +944,9 @@ window.onload = async () => {
         startIdle();
     } catch (error) {
         console.error('Критическая ошибка:', error);
+        // Даже если ошибка, пробуем показать UI (например, звуки не загрузились)
+        state.imagesLoaded = true;
+        state.soundsLoaded = true;
         updateLoadingUI(); 
         startIdle();
     }
