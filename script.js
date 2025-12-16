@@ -86,13 +86,33 @@ if (elements.characterDisplay) {
     elements.characterDisplay.style.webkitIsolation = 'isolate';
 }
 
-function setInstructionText(text, immediate = false) {
+// ============================
+// ФУНКЦИЯ ДЛЯ УПРАВЛЕНИЯ ТЕКСТОМ (Исправлена для задержки)
+// ============================
+
+function setInstructionText(text, immediate = false, fastShow = false) {
     const instruction = elements.instruction;
+    
     if (immediate) {
+        // Используется для "Загрузка... X%"
         instruction.textContent = text;
         instruction.classList.add('show');
         return;
     }
+    
+    // Если нужно показать текст сразу (для финального "Начнём?")
+    if (fastShow) {
+        instruction.textContent = text;
+        // Убираем/добавляем классы сразу, чтобы анимация была только 0.4s
+        instruction.classList.remove('show');
+        // Небольшая задержка, чтобы браузер успел зарегистрировать remove
+        setTimeout(() => {
+            instruction.classList.add('show');
+        }, 50);
+        return;
+    }
+
+    // Стандартная анимация (для смены инструкций во время игры)
     instruction.classList.remove('show');
     setTimeout(() => {
         instruction.textContent = text;
@@ -103,7 +123,7 @@ function setInstructionText(text, immediate = false) {
 }
 
 // ============================
-// DATABASE FUNCTIONS (ИСПРАВЛЕННЫЕ)
+// DATABASE FUNCTIONS (Исправлена: убран updateStats)
 // ============================
 
 async function loadPlayerData() {
@@ -115,7 +135,6 @@ async function loadPlayerData() {
     const userId = tg.initDataUnsafe.user.id;
 
     try {
-        // Убрали game_count из запроса
         const { data, error } = await supabaseClient
             .from('players')
             .select('streak, max_streak') 
@@ -131,7 +150,7 @@ async function loadPlayerData() {
             state.streak = data.streak || 0;
             state.maxStreak = data.max_streak || 0;
             
-            updateStats();
+            // updateStats() УБРАН: вызывается в window.onload
             console.log('Player data loaded:', data);
         } else {
             console.log('New player detected');
@@ -152,7 +171,7 @@ async function savePlayerData() {
         username: user.username || user.first_name || 'Unknown',
         streak: state.streak,
         max_streak: state.maxStreak,
-        updated_at: new Date() // Обновляем дату вручную, если в базе нет триггера
+        updated_at: new Date()
     };
 
     try {
@@ -268,6 +287,10 @@ function checkImagesLoaded() {
     return { allLoaded, loadedCount, totalCount };
 }
 
+// ============================
+// ФУНКЦИЯ ДЛЯ УПРАВЛЕНИЯ ЗАГРУЗКОЙ (Исправлена для задержки текста)
+// ============================
+
 function updateLoadingUI() {
     const imgStatus = checkImagesLoaded();
     const everythingLoaded = imgStatus.allLoaded && state.soundsLoaded;
@@ -297,23 +320,26 @@ function updateLoadingUI() {
         if (!state.imagesLoaded) {
             state.imagesLoaded = true;
             
-            // Загрузка завершена: теперь показываем интерфейс
-            setInstructionText("Начнём?"); 
-
-            // Показываем игровую область (которая была скрыта в CSS)
-            if (elements.gameArea) {
-                elements.gameArea.classList.add('loaded');
-            }
+            // 1. Загрузка завершена: УСТАНАВЛИВАЕМ ИНСТРУКЦИЮ СРАЗУ
+            setInstructionText("Начнём?", false, true); // Используем fastShow = true
             
-            // Показываем кнопку старта (которая была скрыта в CSS по ID)
-            if (elements.startBtn) {
-                elements.startBtn.classList.add('ready');
-                state.isButtonReady = true; 
-            }
-            
-            if (state.gamePhase === 'idle') {
-                startIdleAnimation();
-            }
+            // 2. Ждем небольшую паузу (пока текст "выплывет")
+            setTimeout(() => {
+                // 3. Показываем игровую область
+                if (elements.gameArea) {
+                    elements.gameArea.classList.add('loaded');
+                }
+                
+                // 4. Показываем кнопку старта
+                if (elements.startBtn) {
+                    elements.startBtn.classList.add('ready');
+                    state.isButtonReady = true; 
+                }
+                
+                if (state.gamePhase === 'idle') {
+                    startIdleAnimation();
+                }
+            }, 300); // 300 мс даёт время тексту появиться
         }
     }
 }
@@ -514,12 +540,13 @@ function hideButtonWithAnimation(button) {
         button.style.opacity = '0';
         button.style.transform = 'scale(0.8)';
         setTimeout(() => {
-            button.classList.remove('ready'); // Убираем класс показа
-            button.style.display = ''; // Сбрасываем инлайн стиль
-            // Теперь работает #start-btn { display: none } из CSS
+            button.classList.remove('ready'); 
+            button.style.display = 'none'; 
+            
             button.style.transition = '';
             button.style.opacity = '';
             button.style.transform = '';
+            button.style.display = ''; // Сбрасываем инлайн стиль, чтобы использовалось CSS-правило
         }, 200);
         return;
     }
@@ -719,8 +746,7 @@ function finish() {
     if (state.interval) { clearInterval(state.interval); state.interval = null; }
     
     // Скрываем игровую область через класс
-    elements.gameArea.classList.remove('loaded'); // Станет opacity: 0
-    // elements.gameArea.classList.add('hidden'); // Можно так, но у нас есть CSS логика
+    elements.gameArea.classList.remove('loaded'); 
     
     setTimeout(() => {
         let m = 0;
@@ -729,8 +755,6 @@ function finish() {
         });
         const p = Math.round((m/4)*100);
         
-        // Убрали state.gameCount++
-
         // Логика стрика и результата
         if (p === 100) { 
             state.streak++; 
@@ -745,14 +769,14 @@ function finish() {
         // Обновляем рекорд
         if (state.streak > state.maxStreak) state.maxStreak = state.streak;
         
-        // СОХРАНЕНИЕ ДАННЫХ В SUPABASE (Теперь без game_count)
+        // СОХРАНЕНИЕ ДАННЫХ В SUPABASE
         savePlayerData();
 
         elements.resultPercent.textContent = p + '%';
         elements.resultText.textContent = p === 100 ? "Идеально! 🎉" : (p >= 75 ? "Почти! 🤏🏻" : "Попробуй еще раз...");
         render(elements.resultTarget, state.target);
         render(elements.resultPlayer, state.selection);
-        updateStats();
+        updateStats(); // Анимированное обновление статистики после игры
         
         elements.resultScreen.style.display = 'flex';
         setTimeout(() => {
@@ -805,8 +829,7 @@ function reset() {
     }
 
     state.round++;
-    elements.instruction.textContent = welcomeText; 
-    elements.instruction.classList.remove('show');
+    setInstructionText(welcomeText, false, true); // Используем fastShow = true
     state.lastResult = null; 
     
     elements.resultScreen.classList.remove('show');
@@ -835,17 +858,24 @@ function reset() {
         // Показываем игровую зону
         elements.gameArea.classList.add('loaded');
         
-        updateStats();
+        updateStats(); // Анимированное обновление статистики при сбросе
         
         setTimeout(startIdle, 100);
     }, 400);
 }
 
-function updateStats() {
+// ============================
+// UPDATE STATS (Исправлена: добавлен disableAnimation)
+// ============================
+function updateStats(disableAnimation = false) {
     const anim = (el, val) => {
         if (el.textContent != val) {
-            el.classList.add('updating');
-            setTimeout(() => { el.textContent = val; el.classList.remove('updating'); }, 300);
+            if (disableAnimation) {
+                 el.textContent = val;
+            } else {
+                el.classList.add('updating');
+                setTimeout(() => { el.textContent = val; el.classList.remove('updating'); }, 300);
+            }
         }
     };
     anim(elements.round, state.round);
@@ -879,10 +909,12 @@ document.addEventListener('touchend', function(e) {
 document.addEventListener('selectstart', e => { e.preventDefault(); return false; });
 document.addEventListener('contextmenu', e => { e.preventDefault(); return false; });
 
+// ============================
+// WINDOW ONLOAD (Исправлена: асинхронная загрузка данных и рендеринг)
+// ============================
 window.onload = async () => {
-    // 1. Убеждаемся, что кнопка старта скрыта (она скрыта в CSS по ID, но на всякий случай)
-    // 2. Убеждаемся, что игровая зона скрыта (она скрыта в CSS классом .game-content)
     
+    // 1. Установка текста "Загрузка..."
     if (elements.instruction) {
         setInstructionText("Загрузка... 0%", true); 
     }
@@ -890,11 +922,19 @@ window.onload = async () => {
     initAudioSystem();
     
     try {
+        // 2. Сначала загружаем данные игрока, чтобы обновить state
+        // (Это должно быть Promise.all, но для синхронной обработки данных сделаем отдельно)
+        await loadPlayerData(); 
+        
+        // 3. ПЕРВОНАЧАЛЬНЫЙ РЕНДЕРИНГ: Рендерим статистику СРАЗУ, без анимации
+        updateStats(true); 
+
+        // 4. Запускаем остальные загрузки (изображения, звуки)
         const loadPromises = [
-            loadImages(),
-            loadPlayerData()
+            loadImages()
         ];
         
+        // 5. Ждём завершения загрузки изображений и звуков
         await Promise.all(loadPromises);
         
         if (tg) tg.ready();
