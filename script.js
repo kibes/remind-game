@@ -87,7 +87,7 @@ if (elements.characterDisplay) {
 }
 
 // ============================
-// ФУНКЦИЯ ДЛЯ УПРАВЛЕНИЯ ТЕКСТОМ (Исправлена для задержки)
+// ФУНКЦИЯ ДЛЯ УПРАВЛЕНИЯ ТЕКСТОМ
 // ============================
 
 function setInstructionText(text, immediate = false, fastShow = false) {
@@ -123,7 +123,7 @@ function setInstructionText(text, immediate = false, fastShow = false) {
 }
 
 // ============================
-// DATABASE FUNCTIONS (Исправлена: убран updateStats)
+// DATABASE FUNCTIONS (Убран вызов updateStats)
 // ============================
 
 async function loadPlayerData() {
@@ -288,7 +288,7 @@ function checkImagesLoaded() {
 }
 
 // ============================
-// ФУНКЦИЯ ДЛЯ УПРАВЛЕНИЯ ЗАГРУЗКОЙ (Исправлена для задержки текста)
+// ФУНКЦИЯ ДЛЯ УПРАВЛЕНИЯ ЗАГРУЗКОЙ (Добавлено плавное появление)
 // ============================
 
 function updateLoadingUI() {
@@ -321,16 +321,17 @@ function updateLoadingUI() {
             state.imagesLoaded = true;
             
             // 1. Загрузка завершена: УСТАНАВЛИВАЕМ ИНСТРУКЦИЮ СРАЗУ
-            setInstructionText("Начнём?", false, true); // Используем fastShow = true
+            setInstructionText("Начнём?", false, true); 
             
             // 2. Ждем небольшую паузу (пока текст "выплывет")
             setTimeout(() => {
-                // 3. Показываем игровую область
-                if (elements.gameArea) {
-                    elements.gameArea.classList.add('loaded');
+                
+                // 3. ⭐️ Плавное появление контейнера персонажа
+                if (elements.characterDisplay) {
+                    elements.characterDisplay.classList.add('show-fade');
                 }
                 
-                // 4. Показываем кнопку старта
+                // 4. Плавное появление кнопки старта
                 if (elements.startBtn) {
                     elements.startBtn.classList.add('ready');
                     state.isButtonReady = true; 
@@ -745,8 +746,7 @@ function finish() {
     
     if (state.interval) { clearInterval(state.interval); state.interval = null; }
     
-    // Скрываем игровую область через класс
-    elements.gameArea.classList.remove('loaded'); 
+    // game-content остается видимым, его перекроет result-screen
     
     setTimeout(() => {
         let m = 0;
@@ -843,7 +843,7 @@ function reset() {
         elements.resultTarget.innerHTML = '';
         elements.resultPlayer.innerHTML = '';
         
-        // Показываем кнопку старта (через класс ready)
+        // Показываем кнопку старта (плавное появление)
         elements.startBtn.classList.add('ready');
         elements.startBtn.disabled = false;
         elements.startBtn.style.pointerEvents = 'auto';
@@ -855,9 +855,6 @@ function reset() {
         elements.selectBtn.classList.remove('show');
         elements.selectBtn.classList.add('hidden');
         
-        // Показываем игровую зону
-        elements.gameArea.classList.add('loaded');
-        
         updateStats(); // Анимированное обновление статистики при сбросе
         
         setTimeout(startIdle, 100);
@@ -865,7 +862,7 @@ function reset() {
 }
 
 // ============================
-// UPDATE STATS (Исправлена: добавлен disableAnimation)
+// UPDATE STATS (С отключением анимации)
 // ============================
 function updateStats(disableAnimation = false) {
     const anim = (el, val) => {
@@ -910,7 +907,7 @@ document.addEventListener('selectstart', e => { e.preventDefault(); return false
 document.addEventListener('contextmenu', e => { e.preventDefault(); return false; });
 
 // ============================
-// WINDOW ONLOAD (Исправлена: асинхронная загрузка данных и рендеринг)
+// WINDOW ONLOAD (Асинхронная загрузка данных и рендеринг)
 // ============================
 window.onload = async () => {
     
@@ -922,8 +919,7 @@ window.onload = async () => {
     initAudioSystem();
     
     try {
-        // 2. Сначала загружаем данные игрока, чтобы обновить state
-        // (Это должно быть Promise.all, но для синхронной обработки данных сделаем отдельно)
+        // 2. Сначала загружаем данные игрока (чтобы избежать нулей)
         await loadPlayerData(); 
         
         // 3. ПЕРВОНАЧАЛЬНЫЙ РЕНДЕРИНГ: Рендерим статистику СРАЗУ, без анимации

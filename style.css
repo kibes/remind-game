@@ -109,19 +109,19 @@ h1 {
     color: #db4e4e; 
 }
 
-/* Игровая область - СКРЫТА ПО УМОЛЧАНИЮ */
+/* Игровая область - ⭐️ ИСПРАВЛЕНИЕ: Видна по умолчанию */
 .game-content {
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
-    /* Скрываем контент визуально, но оставляем место */
-    opacity: 0;
-    pointer-events: none;
+    /* ⭐️ Теперь всегда видима */
+    opacity: 1;
+    pointer-events: auto;
     transition: opacity 0.5s ease;
 }
 
-/* Когда всё загружено — плавно показываем */
+/* ❌ Эти классы больше не нужны, т.к. .game-content всегда виден */
 .game-content.loaded {
     opacity: 1;
     pointer-events: auto;
@@ -295,13 +295,12 @@ h1 {
     animation: buttonAppear 0.2s ease forwards;
 }
 
-/* НОВОЕ ПРАВИЛО: Кнопка старта скрыта по ID по умолчанию */
+/* Кнопка старта скрыта по ID по умолчанию */
 #start-btn {
     opacity: 0;
     transform: scale(0.8);
     pointer-events: none;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    /* ⭐️ ИСПРАВЛЕНИЕ: Убираем из Flex-потока, чтобы не занимала место */
     display: none; 
 }
 
@@ -310,7 +309,6 @@ h1 {
     opacity: 1;
     transform: scale(1);
     pointer-events: auto;
-    /* ⭐️ ИСПРАВЛЕНИЕ: Добавляем обратно в поток для показа */
     display: block; 
 }
 
