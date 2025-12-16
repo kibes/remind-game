@@ -1,4 +1,3 @@
-{
 // ============================
 // SUPABASE CONFIGURATION (НАСТРОЙКА БАЗЫ ДАННЫХ)
 // ============================
@@ -14,10 +13,9 @@ function initSupabase() {
         supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         console.log('✓ Supabase клиент инициализирован');
     } else {
-        console.warn('Ошибка: Supabase ключи не установлены, или библиотека не загружена. Сохранение отключено.');
+        console.warn('Ошибка: Supabase ключи не установлены. Сохранение отключено.');
     }
 }
-
 
 // Telegram Web App интеграция
 let tg = null;
@@ -39,7 +37,7 @@ const state = {
     loaded: {},
     order: {},
     interval: null,
-    idleInterval: null,
+    idleInterval: null, // Хранит ID анимации простоя
     currentPart: 0,
     canSelect: true,
     idleCharacter: {},
@@ -64,8 +62,9 @@ const state = {
     audioUnlocked: false,
     
     // Флаги загрузки
-    imagesLoaded: false, // Глобальный флаг, когда Promise.all завершен
-    resourcesReady: false // Когда готовы и картинки, и звуки
+    imagesLoaded: false, 
+    resourcesReady: false,
+    forceLoaded: false // Флаг принудительной загрузки (для фикса десктопа)
 };
 
 // Ссылки на DOM элементы
@@ -87,7 +86,6 @@ const elements = {
     resultPlayer: document.getElementById('result-player')
 };
 
-// ИСПРАВЛЕНИЕ TWA: Принудительная изоляция слоев
 if (elements.characterDisplay) {
     elements.characterDisplay.style.isolation = 'isolate';
     elements.characterDisplay.style.webkitIsolation = 'isolate';
@@ -100,7 +98,6 @@ function setInstructionText(text, immediate = false) {
         instruction.classList.add('show');
         return;
     }
-    // Плавная анимация (исчезновение -> смена текста -> появление)
     instruction.classList.remove('show');
     setTimeout(() => {
         instruction.textContent = text;
@@ -121,8 +118,10 @@ function initAudioSystem() {
         state.audioContext = new AudioContext();
         loadAllSounds();
     } catch (e) {
-        console.error('Web Audio API не поддерживается:', e);
+        console.error('Web Audio API issue:', e);
+        // Если аудио не работает, сразу помечаем как загруженное, чтобы не блокировать игру
         state.soundsLoaded = true; 
+        updateLoadingUI();
     }
 }
 
@@ -130,10 +129,12 @@ async function loadSoundFile(name, url) {
     try {
         const response = await fetch(url);
         const arrayBuffer = await response.arrayBuffer();
-        const audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
-        state.audioBuffers[name] = audioBuffer;
+        if (state.audioContext) {
+            const audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+            state.audioBuffers[name] = audioBuffer;
+        }
     } catch (e) {
-        console.error(`Ошибка загрузки звука ${name}:`, e);
+        console.warn(`Звук ${name} не загружен (не критично):`, e);
     }
 }
 
@@ -151,36 +152,41 @@ async function loadAllSounds() {
     };
 
     const promises = Object.entries(sounds).map(([name, url]) => loadSoundFile(name, url));
-    await Promise.all(promises);
+    
+    // Ждем загрузки, но не блокируем вечно
+    try {
+        await Promise.all(promises);
+    } catch (err) {
+        console.warn('Ошибка загрузки части звуков');
+    }
+    
     state.soundsLoaded = true;
-    console.log('✓ Все звуки загружены');
     updateLoadingUI();
 }
 
 function unlockAudio() {
     if (!state.audioContext || state.audioUnlocked) return;
     
-    const buffer = state.audioContext.createBuffer(1, 1, 22050);
-    const source = state.audioContext.createBufferSource();
-    source.buffer = buffer;
-    source.connect(state.audioContext.destination);
-    if (source.start) source.start(0);
-    else if (source.noteOn) source.noteOn(0);
-
+    // Пытаемся разблокировать аудио контекст по клику
     if (state.audioContext.state === 'suspended') {
-        state.audioContext.resume();
+        state.audioContext.resume().then(() => {
+            state.audioUnlocked = true;
+        }).catch(e => console.log(e));
+    } else {
+        state.audioUnlocked = true;
     }
-    state.audioUnlocked = true;
 }
 
 function playSound(name) {
-    if (!state.soundsLoaded || !state.audioContext || !state.audioBuffers[name]) return;
-    if (state.audioContext.state === 'suspended') state.audioContext.resume();
-
-    const source = state.audioContext.createBufferSource();
-    source.buffer = state.audioBuffers[name];
-    source.connect(state.audioContext.destination);
-    source.start(0);
+    if (!state.audioContext || !state.audioBuffers[name] || !state.audioUnlocked) return;
+    try {
+        const source = state.audioContext.createBufferSource();
+        source.buffer = state.audioBuffers[name];
+        source.connect(state.audioContext.destination);
+        source.start(0);
+    } catch(e) {
+        // Игнорируем ошибки воспроизведения
+    }
 }
 
 const playStartSound = () => playSound('start');
@@ -192,67 +198,41 @@ const playTimerSound = (num) => { if(num >= 0) playSound('timer'); };
 
 
 // ============================
-// DATABASE LOGIC (ЛОГИКА БАЗЫ ДАННЫХ)
+// DATABASE LOGIC
 // ============================
 
 async function loadPlayerData() {
     if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
+    try {
+        const user_id = tg.initDataUnsafe.user.id;
+        const { data, error } = await supabaseClient
+            .from('players')
+            .select('*')
+            .eq('user_id', user_id)
+            .single();
 
-    const user_id = tg.initDataUnsafe.user.id;
-    
-    const { data, error } = await supabaseClient
-        .from('players')
-        .select('*')
-        .eq('user_id', user_id)
-        .single();
-
-    if (error && error.code !== 'PGRST116') { 
-        console.error('Ошибка загрузки данных игрока:', error);
-        return;
+        if (data) {
+            state.streak = data.streak || 0;
+            state.maxStreak = data.max_streak || 0;
+        }
+        updateStats();
+    } catch (e) {
+        console.warn('Supabase load error:', e);
     }
-
-    if (data) {
-        state.streak = data.streak || 0;
-        state.maxStreak = data.max_streak || 0;
-        console.log(`✓ Данные игрока загружены. Стрик: ${state.streak}`);
-    } else {
-        console.log('Нет данных игрока. Начинаем с нуля.');
-    }
-    
-    updateStats();
 }
 
-// FIX: Новая функция для сброса серии на сервере (Anti-Cheat)
 async function resetStreakOnServer() {
     if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
-    
     const user_id = tg.initDataUnsafe.user.id;
-    
-    // Сбрасываем только на сервере, локально оставляем для UI
-    await supabaseClient
-        .from('players')
-        .update({ streak: 0 })
-        .eq('user_id', user_id);
-        
-    console.log('Anti-cheat: Streak staked at 0 on server (game phase started)');
+    await supabaseClient.from('players').update({ streak: 0 }).eq('user_id', user_id);
 }
 
 async function savePlayerData() {
     if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
 
     const user = tg.initDataUnsafe.user;
-    
-    let userName;
-    if (user.first_name) {
-        userName = user.first_name;
-        if (user.last_name) {
-            userName += ' ' + user.last_name;
-        }
-    } else if (user.username) {
-        userName = user.username; 
-    } else {
-        userName = 'Unknown';
-    }
+    let userName = user.first_name || 'Unknown';
+    if (user.last_name) userName += ' ' + user.last_name;
 
     const playerData = {
         user_id: user.id,
@@ -262,15 +242,7 @@ async function savePlayerData() {
         updated_at: new Date() 
     };
 
-    const { error } = await supabaseClient
-        .from('players')
-        .upsert(playerData, { onConflict: 'user_id' });
-
-    if (error) {
-        console.error('Ошибка сохранения данных игрока:', error);
-    } else {
-        console.log('✓ Данные игрока сохранены');
-    }
+    await supabaseClient.from('players').upsert(playerData, { onConflict: 'user_id' });
 }
 
 
@@ -278,64 +250,44 @@ async function savePlayerData() {
 // GAME LOGIC
 // ============================
 
-// FIX: Убрана ненадежная проверка naturalWidth, которая вешала игру на Desktop
-// Мы доверяем Promise.all в loadImages.
 function updateLoadingUI() {
-    // Если уже все готово, выходим (чтобы не зацикливаться)
+    // 1. Если уже всё готово, игнорируем вызов
     if (state.resourcesReady) return;
 
-    // Считаем прогресс (упрощенно, так как загрузка теперь асинхронная)
-    let progressPercent = 0;
-    if (state.imagesLoaded && !state.soundsLoaded) progressPercent = 80;
-    else if (state.imagesLoaded && state.soundsLoaded) progressPercent = 100;
-    else progressPercent = 10; // Просто стартовое значение
-    
-    if (progressPercent < 100) {
-        const progressText = `Загрузка... ${progressPercent}%`;
-        // FIX: Используем immediate=true для обновления цифр, чтобы они не мерцали
-        if (elements.instruction.textContent !== progressText) {
-            setInstructionText(progressText, true);
-        }
-        
-        elements.startBtn.classList.add('hidden');
-        elements.startBtn.disabled = true;
-        elements.startBtn.style.opacity = '0'; 
-        state.isButtonReady = false;
-        
-        // Продолжаем проверять, пока флаги не станут true
-        if (!state.imagesLoaded || !state.soundsLoaded) {
-            // Редкий опрос флагов, т.к. они обновятся колбэками
-            return; 
-        }
+    // 2. Проверяем условие готовности: Картинки И (Звуки ИЛИ Форс-старт)
+    const isReady = state.imagesLoaded && (state.soundsLoaded || state.forceLoaded);
+
+    if (!isReady) {
+        // Показываем процент (эмуляция)
+        let percent = 10;
+        if (state.imagesLoaded) percent += 50;
+        if (state.soundsLoaded) percent += 40;
+        setInstructionText(`Загрузка... ${percent}%`, true);
+        return;
     }
 
-    // Если мы здесь, значит всё 100%
-    if (state.imagesLoaded && state.soundsLoaded && !state.resourcesReady) {
-        state.resourcesReady = true;
-        console.log('✓ UI разблокирован');
+    // 3. Всё готово
+    state.resourcesReady = true;
+    console.log('✓ Игра готова к запуску');
 
-        // FIX: Красивый переход от "Загрузка 100%" к "Начнём?"
-        // Используем immediate=false (по умолчанию), чтобы сработала CSS анимация
-        setInstructionText("Начнём?"); 
-        
-        elements.startBtn.classList.remove('hidden');
-        elements.startBtn.style.opacity = '0';
-        
-        setTimeout(() => {
-            elements.startBtn.style.transition = 'opacity 0.3s ease';
-            elements.startBtn.style.opacity = '1';
-            elements.startBtn.disabled = false;
-            elements.startBtn.style.pointerEvents = 'auto';
-            
-            setTimeout(() => {
-                elements.startBtn.style.transition = '';
-                state.isButtonReady = true; 
-            }, 300);
-        }, 100);
-        
-        if (state.gamePhase === 'idle') {
-            startIdleAnimation();
-        }
+    setInstructionText("Начнём?"); 
+    
+    // Показываем кнопку
+    elements.startBtn.classList.remove('hidden');
+    elements.startBtn.style.opacity = '0';
+    
+    setTimeout(() => {
+        elements.startBtn.style.transition = 'opacity 0.3s ease';
+        elements.startBtn.style.opacity = '1';
+        elements.startBtn.disabled = false;
+        elements.startBtn.style.pointerEvents = 'auto';
+        state.isButtonReady = true; 
+    }, 100);
+    
+    // FIX: Запускаем Idle анимацию ТОЛЬКО здесь.
+    // Это единственная точка входа, чтобы избежать дублирования.
+    if (state.gamePhase === 'idle') {
+        startIdleAnimation();
     }
 }
 
@@ -367,21 +319,24 @@ async function loadImages() {
     const folders = { skin: 'skins/', head: 'heads/', body: 'bodies/', accessory: 'accessories/' };
     preloadCriticalImages();
     
+    const allPromises = [];
+
     for (const type of state.parts) {
         state.loaded[type] = [];
-        const loadPromises = [];
         for (let i = 1; i <= state.partCounts[type]; i++) {
             const img = new Image();
+            const p = new Promise(resolve => {
+                img.onload = () => resolve(true);
+                img.onerror = () => { console.warn('Img err:', img.src); resolve(false); }; // Не реджектим, а резолвим
+            });
             img.src = `${folders[type]}${i}.png`;
-            loadPromises.push(new Promise(r => { 
-                img.onload = () => r(true); 
-                img.onerror = () => { console.warn('Img fail', img.src); r(false); }; 
-            }));
+            allPromises.push(p);
             state.loaded[type].push({ id: i, img: img });
         }
-        await Promise.all(loadPromises);
     }
-    // FIX: Явно ставим флаг готовности после завершения промисов
+    
+    // Ждем всех картинок
+    await Promise.all(allPromises);
     state.imagesLoaded = true;
     updateLoadingUI();
 }
@@ -438,7 +393,6 @@ function setupTouchHandlers() {
 
             if (isStillInside) {
                 e.preventDefault(); 
-                
                 if (this === elements.startBtn) handleStartButton();
                 else if (this === elements.selectBtn) handleSelectButton();
                 else if (this === elements.resultAgainBtn) handleResetButton();
@@ -494,21 +448,33 @@ function startIdle() {
     
     createRandomOrder();
     
+    // Если ресурсы еще не готовы, просто пытаемся обновить UI,
+    // но саму анимацию НЕ запускаем здесь (ее запустит updateLoadingUI)
     if (!state.resourcesReady) {
         updateLoadingUI();
         return;
     }
+    
+    // Если ресурсы УЖЕ готовы (например, рестарт игры), запускаем.
     startIdleAnimation();
 }
 
-// FIX: Исправлена логика первого кадра, чтобы персонаж не дергался и не менял 2 части сразу
+// FIX: Исправлена логика запуска анимации и удаление старых интервалов
 function startIdleAnimation() {
-    // Если картинки еще не прогрузились (на случай быстрого вызова)
+    // Жёсткая очистка предыдущего цикла
+    if (state.idleInterval) {
+        cancelAnimationFrame(state.idleInterval);
+        state.idleInterval = null;
+    }
+
     if (!state.imagesLoaded) return;
+    
+    // Убедимся, что мы в правильной фазе
+    if (state.gamePhase !== 'idle') return;
 
     elements.instruction.classList.add('show');
     
-    // 1. Сначала генерируем и отрисовываем стартового персонажа
+    // Генерируем стартового
     state.parts.forEach(p => {
         const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
         state.idleCharacter[p] = getRandomOrderItem(p, randomIndex);
@@ -517,12 +483,15 @@ function startIdleAnimation() {
     
     let lastTime = 0;
     let partIndex = 0; 
-    let isFirstFrame = true; // Флаг для первого запуска цикла
+    let isFirstFrame = true;
     
     const animateIdle = (timestamp) => {
-        if (!state.idleInterval) return;
-        
-        // FIX: На первом кадре просто запоминаем время, НЕ обновляем персонажа
+        // Если фаза сменилась (нажали старт), прерываем немедленно
+        if (state.gamePhase !== 'idle') {
+            state.idleInterval = null;
+            return;
+        }
+
         if (isFirstFrame) {
             lastTime = timestamp;
             isFirstFrame = false;
@@ -530,12 +499,9 @@ function startIdleAnimation() {
             return;
         }
         
-        // Теперь обновление произойдет ровно через 1000мс после отрисовки
         if (timestamp - lastTime > 1000) { 
             lastTime = timestamp;
-            
             const p = state.parts[partIndex % state.parts.length];
-            
             let next;
             do { 
                 const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
@@ -546,14 +512,12 @@ function startIdleAnimation() {
                 state.idleCharacter[p] = next;
                 render(elements.characterDisplay, state.idleCharacter);
             }
-            
             partIndex++; 
         }
         
-        if (state.gamePhase === 'idle') requestAnimationFrame(animateIdle);
+        state.idleInterval = requestAnimationFrame(animateIdle);
     };
     
-    if (state.idleInterval) cancelAnimationFrame(state.idleInterval);
     state.idleInterval = requestAnimationFrame(animateIdle);
 }
 
@@ -595,11 +559,8 @@ function animateTimerChange(timerNumber) {
 
 function startGame() {
     if (state.startBtnLock) return;
-    
     state.startBtnLock = true;
     state.isButtonReady = false;
-    
-    // FIX: Убрали resetStreakOnServer() отсюда, чтобы не сбрасывать при случайном закрытии во время генерации
     
     if (elements.startBtn && !elements.startBtn.classList.contains('hidden')) {
         hideButtonWithAnimation(elements.startBtn);
@@ -610,7 +571,7 @@ function startGame() {
     state.changeSoundPlayed = false;
     
     playStartSound();
-    stopIdle();
+    stopIdle(); // Обязательно останавливаем анимацию простоя
     setInstructionText("Создаём персонажа...");
     
     if (state.fastCycle) { cancelAnimationFrame(state.fastCycle); state.fastCycle = null; }
@@ -685,9 +646,7 @@ function finalizeTarget() {
 }
 
 function startSelecting() {
-    // FIX: Сбрасываем стрик на сервере в 0 именно здесь.
-    // Если игрок закроет игру сейчас (после того как таймер вышел), стрик обнулится.
-    resetStreakOnServer();
+    resetStreakOnServer(); // Анти-чит: сброс серии здесь
 
     state.gamePhase = 'selecting';
     state.currentPart = 0;
@@ -725,7 +684,6 @@ function nextCycle() {
         idx = (idx + 1) % state.partCounts[type];
         state.selection[type] = getRandomOrderItem(type, idx);
         render(elements.characterDisplay, state.selection);
-        
         playNextSound();
     };
     state.interval = setInterval(cycle, finalSpeed);
@@ -754,9 +712,7 @@ function select() {
         state.selection[nextType] = getRandomOrderItem(nextType, 0);
         render(elements.characterDisplay, state.selection);
         setInstructionText(`Выбери ${getLabel(nextType)}`);
-        
         playNextSound(); 
-        
         setTimeout(() => { state.canSelect = true; nextCycle(); }, 150);
     }
     return true;
@@ -790,10 +746,7 @@ function finish() {
         render(elements.resultPlayer, state.selection);
         updateStats();
         
-        // --- СОХРАНЕНИЕ ДАННЫХ В БАЗУ ДАННЫХ ---
-        // Записываем реальный результат (или 0, если проиграл, или +1 если выиграл)
         savePlayerData();
-        // ---------------------------------------
         
         elements.resultScreen.style.display = 'flex';
         setTimeout(() => {
@@ -834,11 +787,7 @@ function reset() {
     
     let welcomeText = "Начнём?";
     if (state.lastResult === 'win') {
-        if (state.streak >= 60) {
-            welcomeText = "Максимальная сложность!";
-        } else {
-            welcomeText = "Сложность повысилась!";
-        }
+        welcomeText = state.streak >= 60 ? "Максимальная сложность!" : "Сложность повысилась!";
     } else if (state.lastResult === 'almost') {
         welcomeText = "Попробуем ещё?";
     } else if (state.lastResult === 'lose') {
@@ -919,10 +868,7 @@ document.addEventListener('selectstart', e => { e.preventDefault(); return false
 document.addEventListener('contextmenu', e => { e.preventDefault(); return false; });
 
 window.onload = async () => {
-    if (elements.instruction) {
-        setInstructionText("Загрузка... 0%", true); 
-    }
-    
+    if (elements.instruction) setInstructionText("Загрузка... 0%", true); 
     if (elements.startBtn) {
         elements.startBtn.classList.add('hidden');
         elements.startBtn.disabled = true;
@@ -931,24 +877,35 @@ window.onload = async () => {
     initSupabase(); 
     initAudioSystem();
     
+    // Safety Timeout: Если через 4 секунды игра не загрузилась (например, аудио зависло)
+    // мы принудительно открываем кнопку. Это фиксит Desktop TWA.
+    setTimeout(() => {
+        if (!state.resourcesReady) {
+            console.warn('Safety timeout: forcing game start');
+            state.forceLoaded = true;
+            state.imagesLoaded = true; // Считаем картинки загруженными
+            updateLoadingUI();
+        }
+    }, 4000);
+
     try {
-        const loadPromises = [
-            loadImages(),
-            loadPlayerData()
-        ];
-        
-        await Promise.all(loadPromises);
+        // Мы не используем await Promise.all, чтобы блокировать запуск.
+        // Каждая функция (loadImages, loadAllSounds) сама вызовет updateLoadingUI, когда закончит.
+        loadImages();
+        loadPlayerData();
         
         if (tg) tg.ready();
         setupTouchHandlers();
-        startIdle();
+        
+        // FIX: startIdle() отсюда УБРАН.
+        // Теперь только updateLoadingUI может вызвать startIdleAnimation.
+        // Но нам нужно задать начальное состояние фазы.
+        state.gamePhase = 'idle';
+        createRandomOrder();
+
     } catch (error) {
         console.error('Критическая ошибка:', error);
-        // Даже если ошибка, пробуем показать UI (например, звуки не загрузились)
-        state.imagesLoaded = true;
-        state.soundsLoaded = true;
-        updateLoadingUI(); 
-        startIdle();
+        state.forceLoaded = true;
+        updateLoadingUI();
     }
 };
-}
