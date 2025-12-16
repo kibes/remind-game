@@ -1,3 +1,20 @@
+// ============================
+// CONFIGURATION & SUPABASE
+// ============================
+
+// Вставь сюда свои ключи из Supabase Dashboard
+const SUPABASE_URL = 'https://lmlgnsthwwvcczoatoag.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_PQiqm6aI8DcfGYXog73idg_O9dWKx_R';
+
+// Инициализация клиента Supabase
+// (Предполагается, что библиотека подключена через CDN в HTML)
+let supabaseClient = null;
+if (window.supabase && window.supabase.createClient) {
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+} else {
+    console.warn('Supabase JS library not found. Persistence disabled.');
+}
+
 // Telegram Web App интеграция
 let tg = null;
 if (window.Telegram && window.Telegram.WebApp) {
@@ -6,11 +23,16 @@ if (window.Telegram && window.Telegram.WebApp) {
     tg.enableClosingConfirmation();
 }
 
+// ============================
+// GAME STATE
+// ============================
+
 // Основной объект состояния игры
 const state = {
     round: 1,
     maxStreak: 0,
     streak: 0,
+    gameCount: 0, // НОВОЕ: Счетчик сыгранных игр
     target: {},
     selection: {},
     parts: ['skin', 'head', 'body', 'accessory'],
@@ -64,7 +86,7 @@ const elements = {
     resultPlayer: document.getElementById('result-player')
 };
 
-// ИСПРАВЛЕНИЕ TWA: Принудительная изоляция слоев (для лечения бага с просвечиванием)
+// ИСПРАВЛЕНИЕ TWA: Принудительная изоляция слоев
 if (elements.characterDisplay) {
     elements.characterDisplay.style.isolation = 'isolate';
     elements.characterDisplay.style.webkitIsolation = 'isolate';
@@ -87,6 +109,74 @@ function setInstructionText(text, immediate = false) {
 }
 
 // ============================
+// DATABASE FUNCTIONS
+// ============================
+
+// Загрузка данных игрока при старте
+async function loadPlayerData() {
+    if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) {
+        console.log('Skipping DB load: Not in Telegram or Supabase not configured');
+        return;
+    }
+
+    const userId = tg.initDataUnsafe.user.id;
+
+    try {
+        const { data, error } = await supabaseClient
+            .from('players')
+            .select('streak, max_streak, game_count')
+            .eq('user_id', userId)
+            .single();
+
+        if (error && error.code !== 'PGRST116') { // PGRST116 = no rows found
+            console.error('Supabase load error:', error);
+            return;
+        }
+
+        if (data) {
+            state.streak = data.streak || 0;
+            state.maxStreak = data.max_streak || 0;
+            state.gameCount = data.game_count || 0;
+            
+            // Обновляем UI сразу после загрузки данных
+            updateStats();
+            console.log('Player data loaded:', data);
+        } else {
+            // Новый пользователь
+            console.log('New player detected');
+        }
+    } catch (e) {
+        console.error('Unexpected error loading data:', e);
+    }
+}
+
+// Сохранение прогресса
+async function savePlayerData() {
+    if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
+
+    const user = tg.initDataUnsafe.user;
+    
+    const playerData = {
+        user_id: user.id,
+        username: user.username || user.first_name || 'Unknown',
+        streak: state.streak,
+        max_streak: state.maxStreak,
+        game_count: state.gameCount
+    };
+
+    try {
+        const { error } = await supabaseClient
+            .from('players')
+            .upsert(playerData, { onConflict: 'user_id' });
+
+        if (error) console.error('Supabase save error:', error);
+        else console.log('Progress saved');
+    } catch (e) {
+        console.error('Unexpected error saving data:', e);
+    }
+}
+
+// ============================
 // AUDIO SYSTEM (Web Audio API)
 // ============================
 
@@ -98,7 +188,6 @@ function initAudioSystem() {
         loadAllSounds();
     } catch (e) {
         console.error('Web Audio API не поддерживается:', e);
-        // Даже если аудио сломалось, помечаем как загруженное, чтобы игра работала
         state.soundsLoaded = true; 
     }
 }
@@ -131,7 +220,6 @@ async function loadAllSounds() {
     await Promise.all(promises);
     state.soundsLoaded = true;
     console.log('✓ Все звуки загружены');
-    // Вызываем проверку UI, так как звуки могли загрузиться последними
     updateLoadingUI();
 }
 
@@ -190,12 +278,10 @@ function checkImagesLoaded() {
     return { allLoaded, loadedCount, totalCount };
 }
 
-// ИЗМЕНЕНИЕ: Теперь показывает процент загрузки и обеспечивает плавный переход
 function updateLoadingUI() {
     const imgStatus = checkImagesLoaded();
     const everythingLoaded = imgStatus.allLoaded && state.soundsLoaded;
     
-    // Расчет процента загрузки (26 изображений + 1 аудиосистема = 27 единиц)
     const totalWorkloadUnits = 27; 
     const loadedSoundUnit = state.soundsLoaded ? 1 : 0; 
     const loadedWorkloadUnits = imgStatus.loadedCount + loadedSoundUnit;
@@ -212,39 +298,30 @@ function updateLoadingUI() {
         progressPercent = 100;
     }
 
-
     if (!everythingLoaded) {
-        // Показываем прогресс в процентах
         const progressText = `Загрузка... ${progressPercent}%`;
         if (elements.instruction.textContent !== progressText) {
             elements.instruction.textContent = progressText;
         }
         
-        // Гарантированно скрываем кнопку
         elements.startBtn.classList.add('hidden');
         elements.startBtn.disabled = true;
         elements.startBtn.style.opacity = '0'; 
         state.isButtonReady = false;
         
-        // Повторная проверка через 500мс
         setTimeout(updateLoadingUI, 500);
     } else {
-        // Если уже всё загружено, но мы еще не инициализировали фазу
         if (!state.imagesLoaded) {
             state.imagesLoaded = true;
             
-            // НОВОЕ: Используем setInstructionText для плавного перехода на "Начнём?"
             setInstructionText("Начнём?"); 
 
-            // НОВОЕ ДЕЙСТВИЕ: Показываем область игры (game-area)
             elements.gameArea.style.opacity = '1';
             elements.gameArea.style.visibility = 'visible'; 
             
-            // Анимация появления кнопки
             elements.startBtn.classList.remove('hidden');
             elements.startBtn.style.opacity = '0';
             
-            // Плавное появление
             setTimeout(() => {
                 elements.startBtn.style.transition = 'opacity 0.3s ease';
                 elements.startBtn.style.opacity = '1';
@@ -403,7 +480,6 @@ function startIdle() {
     
     createRandomOrder();
     
-    // Если еще грузимся - выходим, UI обновит updateLoadingUI
     if (!state.imagesLoaded || !state.soundsLoaded) {
         updateLoadingUI();
         return;
@@ -567,7 +643,6 @@ function finalizeTarget() {
     }, 500);
 }
 
-// ИЗМЕНЕНИЕ: Добавлен звук next.mp3 при появлении первого атрибута
 function startSelecting() {
     state.gamePhase = 'selecting';
     state.currentPart = 0;
@@ -581,7 +656,6 @@ function startSelecting() {
     render(elements.characterDisplay, state.selection);
     setInstructionText(`Выбери ${getLabel(firstType)}`);
     
-    // Звук при первом появлении атрибута
     playNextSound();
     
     setTimeout(() => {
@@ -591,7 +665,6 @@ function startSelecting() {
     }, 400);
 }
 
-// nextCycle с проигрыванием звука при каждой прокрутке
 function nextCycle() {
     if (state.currentPart >= state.parts.length) { finish(); return; }
     
@@ -607,8 +680,6 @@ function nextCycle() {
         idx = (idx + 1) % state.partCounts[type];
         state.selection[type] = getRandomOrderItem(type, idx);
         render(elements.characterDisplay, state.selection);
-        
-        // Звук при каждой смене предмета во время прокрутки
         playNextSound();
     };
     state.interval = setInterval(cycle, finalSpeed);
@@ -619,7 +690,6 @@ function getLabel(t) {
     return {skin:'цвет кожи', head:'голову', body:'тело', accessory:'аксессуар'}[t]; 
 }
 
-// ИЗМЕНЕНИЕ: Добавлен звук next.mp3 при переходе к следующему атрибуту
 function select() {
     if (!state.canSelect || state.gamePhase !== 'selecting') return false;
     
@@ -638,8 +708,6 @@ function select() {
         state.selection[nextType] = getRandomOrderItem(nextType, 0);
         render(elements.characterDisplay, state.selection);
         setInstructionText(`Выбери ${getLabel(nextType)}`);
-        
-        // Звук при появлении следующего атрибута
         playNextSound(); 
         
         setTimeout(() => { state.canSelect = true; nextCycle(); }, 150);
@@ -663,12 +731,26 @@ function finish() {
         });
         const p = Math.round((m/4)*100);
         
-        if (p === 100) { state.streak++; state.lastResult = 'win'; }
-        else if (p < 75) { state.streak = 0; state.lastResult = 'lose'; }
-        else { state.lastResult = 'almost'; }
+        // Увеличиваем счетчик игр
+        state.gameCount++;
+
+        // Логика стрика и результата
+        if (p === 100) { 
+            state.streak++; 
+            state.lastResult = 'win'; 
+        } else if (p < 75) { 
+            state.streak = 0; 
+            state.lastResult = 'lose'; 
+        } else { 
+            state.lastResult = 'almost'; 
+        }
         
+        // Обновляем рекорд
         if (state.streak > state.maxStreak) state.maxStreak = state.streak;
         
+        // СОХРАНЕНИЕ ДАННЫХ В SUPABASE
+        savePlayerData();
+
         elements.resultPercent.textContent = p + '%';
         elements.resultText.textContent = p === 100 ? "Идеально! 🎉" : (p >= 75 ? "Почти! 🤏🏻" : "Попробуй еще раз...");
         render(elements.resultTarget, state.target);
@@ -703,7 +785,6 @@ function finish() {
     }, 400);
 }
 
-// ВОЗВРАЩЕННАЯ ЛОГИКА: Динамический текст приветствия
 function reset() {
     if (state.resetBtnLock || state.isBusy) return;
     
@@ -755,7 +836,6 @@ function reset() {
         elements.selectBtn.classList.remove('show');
         elements.selectBtn.classList.add('hidden');
         
-        // ВОССТАНОВЛЕНИЕ ВИДИМОСТИ ИГРОВОЙ ОБЛАСТИ
         elements.gameArea.classList.remove('hidden');
         elements.gameArea.style.opacity = '1';
         elements.gameArea.style.visibility = 'visible';
@@ -804,7 +884,6 @@ document.addEventListener('touchend', function(e) {
 document.addEventListener('selectstart', e => { e.preventDefault(); return false; });
 document.addEventListener('contextmenu', e => { e.preventDefault(); return false; });
 
-// ИЗМЕНЕНИЕ: Мгновенное отображение "Загрузка..."
 window.onload = async () => {
     // 1. Мгновенное отображение надписи "Загрузка..."
     if (elements.instruction) {
@@ -817,17 +896,22 @@ window.onload = async () => {
         elements.startBtn.disabled = true;
     }
     
-    // ПРИМЕЧАНИЕ: gameArea (game-content) теперь скрыта в CSS по умолчанию
-    
     initAudioSystem();
+    
     try {
-        await loadImages();
+        // Параллельная загрузка ресурсов и данных игрока
+        const loadPromises = [
+            loadImages(),
+            loadPlayerData()
+        ];
+        
+        await Promise.all(loadPromises);
+        
         if (tg) tg.ready();
         setupTouchHandlers();
         startIdle();
     } catch (error) {
         console.error('Ошибка:', error);
-        // В случае ошибки, запускаем процесс, чтобы он показал ошибку или прогресс
         updateLoadingUI(); 
         startIdle();
     }
