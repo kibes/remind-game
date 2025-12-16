@@ -1,16 +1,9 @@
-// Telegram Web App интеграция
-let tg = null;
-if (window.Telegram && window.Telegram.WebApp) {
-    tg = window.Telegram.WebApp;
-    tg.expand();
-    tg.enableClosingConfirmation();
-}
 
 // ============================
 // SUPABASE CONFIGURATION (НАСТРОЙКА БАЗЫ ДАННЫХ)
 // ============================
 
-// !!! ВСТАВЬТЕ СЮДА ВАШИ КЛЮЧИ !!!
+// !!! ВСТАВЬТЕ СЮДА ВАШИ РЕАЛЬНЫЕ КЛЮЧИ !!!
 const SUPABASE_URL = 'https://lmlgnsthwwvcczoatoag.supabase.co'; // Пример: 'https://xyz.supabase.co'
 const SUPABASE_ANON_KEY = 'sb_publishable_PQiqm6aI8DcfGYXog73idg_O9dWKx_R'; // Пример: 'eyJhbGciOiJIUzI1NiI...'
 
