@@ -1,18 +1,16 @@
-
+{
 // ============================
 // SUPABASE CONFIGURATION (НАСТРОЙКА БАЗЫ ДАННЫХ)
 // ============================
 
 // !!! ВСТАВЬТЕ СЮДА ВАШИ РЕАЛЬНЫЕ КЛЮЧИ !!!
-const SUPABASE_URL = 'https://lmlgnsthwwvcczoatoag.supabase.co'; // Пример: 'https://xyz.supabase.co'
-const SUPABASE_ANON_KEY = 'sb_publishable_PQiqm6aI8DcfGYXog73idg_O9dWKx_R'; // Пример: 'eyJhbGciOiJIUzI1NiI...'
+const SUPABASE_URL = 'https://lmlgnsthwwvcczoatoag.supabase.co'; 
+const SUPABASE_ANON_KEY = 'sb_publishable_PQiqm6aI8DcfGYXog73idg_O9dWKx_R'; 
 
 let supabaseClient = null;
 
 function initSupabase() {
-    // Проверяем, что библиотека Supabase уже загружена (должна быть в теге <script>)
     if (window.supabase && SUPABASE_URL !== 'ВАШ_SUPABASE_URL') {
-        // В старых версиях могло быть SUPABASE_KEY. Используем SUPABASE_ANON_KEY для ясности.
         supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         console.log('✓ Supabase клиент инициализирован');
     } else {
@@ -87,7 +85,7 @@ const elements = {
     resultPlayer: document.getElementById('result-player')
 };
 
-// ИСПРАВЛЕНИЕ TWA: Принудительная изоляция слоев (для лечения бага с просвечиванием)
+// ИСПРАВЛЕНИЕ TWA: Принудительная изоляция слоев
 if (elements.characterDisplay) {
     elements.characterDisplay.style.isolation = 'isolate';
     elements.characterDisplay.style.webkitIsolation = 'isolate';
@@ -100,6 +98,7 @@ function setInstructionText(text, immediate = false) {
         instruction.classList.add('show');
         return;
     }
+    // Плавная анимация
     instruction.classList.remove('show');
     setTimeout(() => {
         instruction.textContent = text;
@@ -121,7 +120,6 @@ function initAudioSystem() {
         loadAllSounds();
     } catch (e) {
         console.error('Web Audio API не поддерживается:', e);
-        // Даже если аудио сломалось, помечаем как загруженное, чтобы игра работала
         state.soundsLoaded = true; 
     }
 }
@@ -206,7 +204,7 @@ async function loadPlayerData() {
         .eq('user_id', user_id)
         .single();
 
-    if (error && error.code !== 'PGRST116') { // PGRST116 = No rows found
+    if (error && error.code !== 'PGRST116') { 
         console.error('Ошибка загрузки данных игрока:', error);
         return;
     }
@@ -222,13 +220,27 @@ async function loadPlayerData() {
     updateStats();
 }
 
+// FIX 4: Новая функция для сброса серии на сервере (Anti-Cheat)
+async function resetStreakOnServer() {
+    if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
+    
+    // Мы отправляем 0 на сервер, но НЕ меняем state.streak локально,
+    // чтобы сохранить серию для следующего вычисления результата.
+    const user_id = tg.initDataUnsafe.user.id;
+    
+    await supabaseClient
+        .from('players')
+        .update({ streak: 0 })
+        .eq('user_id', user_id);
+        
+    console.log('Anti-cheat: Streak staked at 0 on server');
+}
+
 async function savePlayerData() {
     if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
 
     const user = tg.initDataUnsafe.user;
     
-    // ============================================
-    // УЛУЧШЕННАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ ИМЕНИ/ЮЗЕРНЕЙМА (ПРИОРИТЕТ ИМЕНИ)
     let userName;
     if (user.first_name) {
         userName = user.first_name;
@@ -236,16 +248,13 @@ async function savePlayerData() {
             userName += ' ' + user.last_name;
         }
     } else if (user.username) {
-        // Если имя не задано, используем юзернейм
         userName = user.username; 
     } else {
         userName = 'Unknown';
     }
-    // ============================================
 
     const playerData = {
         user_id: user.id,
-        // Сохраняем имя (или юзернейм, если имени нет) в поле username базы данных
         username: userName, 
         streak: state.streak,
         max_streak: state.maxStreak,
@@ -289,7 +298,6 @@ function updateLoadingUI() {
     const imgStatus = checkImagesLoaded();
     const everythingLoaded = imgStatus.allLoaded && state.soundsLoaded;
     
-    // Расчет процента загрузки (26 изображений + 1 аудиосистема = 27 единиц)
     const totalWorkloadUnits = 27; 
     const loadedSoundUnit = state.soundsLoaded ? 1 : 0; 
     const loadedWorkloadUnits = imgStatus.loadedCount + loadedSoundUnit;
@@ -306,11 +314,14 @@ function updateLoadingUI() {
         progressPercent = 100;
     }
 
-
     if (!everythingLoaded) {
         const progressText = `Загрузка... ${progressPercent}%`;
+        // FIX 3: Обновляем текст загрузки без анимации скрытия, 
+        // чтобы цифры просто менялись. Используем immediate=true или прямой доступ
         if (elements.instruction.textContent !== progressText) {
+            // Прямая замена текста для загрузчика (без fade out)
             elements.instruction.textContent = progressText;
+            elements.instruction.classList.add('show'); 
         }
         
         elements.startBtn.classList.add('hidden');
@@ -323,6 +334,8 @@ function updateLoadingUI() {
         if (!state.imagesLoaded) {
             state.imagesLoaded = true;
             
+            // FIX 3: Теперь вызываем стандартный setInstructionText (без immediate),
+            // чтобы получить красивый FadeOut -> FadeIn переход от "Загрузка 100%" к "Начнём?"
             setInstructionText("Начнём?"); 
             
             elements.startBtn.classList.remove('hidden');
@@ -406,6 +419,7 @@ function render(container, data) {
     container.appendChild(fragment);
 }
 
+// FIX 2: Улучшенная обработка тачей (отмена нажатия при уводе пальца)
 function setupTouchHandlers() {
     const buttons = [elements.startBtn, elements.selectBtn, elements.resultAgainBtn];
     
@@ -421,6 +435,7 @@ function setupTouchHandlers() {
         if (!button) return;
         
         button.addEventListener('touchstart', function(e) {
+            if (this.disabled || this.classList.contains('hidden')) return;
             state.touchStartedOnButton = true;
             state.currentTouchButton = this;
             this.style.transform = 'scale(0.97)';
@@ -428,14 +443,28 @@ function setupTouchHandlers() {
         }, { passive: true });
         
         button.addEventListener('touchend', function(e) {
-            if (state.touchStartedOnButton && state.currentTouchButton === this) {
-                this.style.transform = '';
-                e.preventDefault();
+            if (!state.touchStartedOnButton || state.currentTouchButton !== this) return;
+
+            this.style.transform = '';
+            
+            // Проверка: находится ли палец всё ещё над кнопкой?
+            const touch = e.changedTouches[0];
+            const rect = this.getBoundingClientRect();
+            const isStillInside = (
+                touch.clientX >= rect.left && 
+                touch.clientX <= rect.right && 
+                touch.clientY >= rect.top && 
+                touch.clientY <= rect.bottom
+            );
+
+            if (isStillInside) {
+                e.preventDefault(); // Предотвращаем клик мыши, если это тач
                 
                 if (this === elements.startBtn) handleStartButton();
                 else if (this === elements.selectBtn) handleSelectButton();
                 else if (this === elements.resultAgainBtn) handleResetButton();
             }
+
             state.touchStartedOnButton = false;
             state.currentTouchButton = null;
         }, { passive: false });
@@ -446,8 +475,9 @@ function setupTouchHandlers() {
         }, { passive: true });
     });
     
+    // Оставляем Click для десктопа (но тач-события его часто перехватывают preventDefault выше)
     elements.startBtn.addEventListener('click', (e) => { 
-        if(e.detail === 0) return;
+        if(e.detail === 0) return; // Игнорируем синтетические клики от клавиатуры (Enter)
         handleStartButton(); 
     });
     elements.selectBtn.addEventListener('click', (e) => { 
@@ -493,7 +523,6 @@ function startIdle() {
     startIdleAnimation();
 }
 
-// ИЗМЕНЕННАЯ ЛОГИКА: Смена одного атрибута по очереди, чтобы избежать "двойной смены"
 function startIdleAnimation() {
     elements.instruction.classList.add('show');
     
@@ -504,33 +533,40 @@ function startIdleAnimation() {
     });
     render(elements.characterDisplay, state.idleCharacter);
     
+    // FIX 1: Инициализируем lastTime "будущим", чтобы первый кадр не сработал мгновенно
+    // или устанавливаем флаг isFirstFrame
     let lastTime = 0;
-    let partIndex = 0; // Для циклической смены
+    let partIndex = 0; 
+    let isFirstFrame = true;
     
     const animateIdle = (timestamp) => {
         if (!state.idleInterval) return;
         
-        // Смена атрибута происходит только раз в секунду
+        // Если это первый запуск, просто запоминаем время и не меняем ничего
+        if (isFirstFrame) {
+            lastTime = timestamp;
+            isFirstFrame = false;
+            state.idleInterval = requestAnimationFrame(animateIdle);
+            return;
+        }
+        
         if (timestamp - lastTime > 1000) { 
             lastTime = timestamp;
             
-            // Выбираем часть по циклу (skin, head, body, accessory, skin, ...)
             const p = state.parts[partIndex % state.parts.length];
             
             let next;
-            // Находим новый, случайный элемент
             do { 
                 const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
                 next = getRandomOrderItem(p, randomIndex); 
             } while (next && next.id === state.idleCharacter[p]?.id);
             
             if (next) {
-                // Обновление
                 state.idleCharacter[p] = next;
                 render(elements.characterDisplay, state.idleCharacter);
             }
             
-            partIndex++; // Переходим к следующей части для следующей секунды
+            partIndex++; 
         }
         
         if (state.gamePhase === 'idle') requestAnimationFrame(animateIdle);
@@ -581,6 +617,9 @@ function startGame() {
     
     state.startBtnLock = true;
     state.isButtonReady = false;
+    
+    // FIX 4: Сброс стрика на сервере при начале игры
+    resetStreakOnServer();
     
     if (elements.startBtn && !elements.startBtn.classList.contains('hidden')) {
         hideButtonWithAnimation(elements.startBtn);
@@ -691,9 +730,9 @@ function nextCycle() {
     if (state.currentPart >= state.parts.length) { finish(); return; }
     
     const type = state.parts[state.currentPart];
-    let baseSpeed = 1200 - (state.currentPart * 100);
-    let finalSpeed = state.streak > 0 ? baseSpeed * Math.pow(0.97, state.streak) : baseSpeed;
-    finalSpeed = Math.max(finalSpeed, 200);
+    let baseSpeed = 1200 - (state.currentPart * 184);
+    let finalSpeed = state.streak > 0 ? baseSpeed * Math.pow(0.968, state.streak) : baseSpeed;
+    finalSpeed = Math.max(finalSpeed, 250);
     
     let idx = 0;
     if (state.interval) clearInterval(state.interval);
@@ -768,6 +807,7 @@ function finish() {
         updateStats();
         
         // --- СОХРАНЕНИЕ ДАННЫХ В БАЗУ ДАННЫХ ---
+        // Здесь мы перезаписываем 0 (который установили в начале игры) на реальный результат
         savePlayerData();
         // ---------------------------------------
         
@@ -894,7 +934,6 @@ document.addEventListener('touchend', function(e) {
 document.addEventListener('selectstart', e => { e.preventDefault(); return false; });
 document.addEventListener('contextmenu', e => { e.preventDefault(); return false; });
 
-// ИЗМЕНЕНИЕ: Мгновенное отображение "Загрузка..." и вызов initSupabase/loadPlayerData
 window.onload = async () => {
     // 1. Мгновенное отображение надписи "Загрузка..."
     if (elements.instruction) {
@@ -907,11 +946,10 @@ window.onload = async () => {
         elements.startBtn.disabled = true;
     }
     
-    initSupabase(); // ИНИЦИАЛИЗАЦИЯ SUPABASE
+    initSupabase(); 
     initAudioSystem();
     
     try {
-        // Загрузка изображений и данных игрока происходит параллельно
         const loadPromises = [
             loadImages(),
             loadPlayerData()
@@ -928,3 +966,4 @@ window.onload = async () => {
         startIdle();
     }
 };
+}
