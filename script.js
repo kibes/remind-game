@@ -13,7 +13,7 @@ function initSupabase() {
         supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         console.log('✓ Supabase клиент инициализирован');
     } else {
-        console.warn('Ошибка: Supabase ключи не установлены. Сохранение отключено.');
+        console.warn('Ошибка: Supabase ключи не установлены, или библиотека не загружена. Сохранение отключено.');
     }
 }
 
@@ -37,7 +37,7 @@ const state = {
     loaded: {},
     order: {},
     interval: null,
-    idleInterval: null, // Хранит ID анимации простоя
+    idleInterval: null,
     currentPart: 0,
     canSelect: true,
     idleCharacter: {},
@@ -50,6 +50,8 @@ const state = {
     resetBtnLock: false,
     userInteracted: false,
     isButtonReady: false, 
+    loadingFinalized: false, 
+    canPressSpace: false, 
 
     // Определение платформы
     isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream,
@@ -61,10 +63,11 @@ const state = {
     soundsLoaded: false,
     audioUnlocked: false,
     
-    // Флаги загрузки
-    imagesLoaded: false, 
-    resourcesReady: false,
-    forceLoaded: false // Флаг принудительной загрузки (для фикса десктопа)
+    // Состояние загрузки
+    totalAssets: 0,     
+    loadedAssets: 0,    
+    resourcesReady: false, 
+    forceLoaded: false  
 };
 
 // Ссылки на DOM элементы
@@ -95,9 +98,16 @@ function setInstructionText(text, immediate = false) {
     const instruction = elements.instruction;
     if (immediate) {
         instruction.textContent = text;
+        
+        // Используем принудительный показ без анимации для мгновенного появления текста
+        instruction.style.transition = 'none';
         instruction.classList.add('show');
+        void instruction.offsetWidth; // Принудительная перерисовка
+        instruction.style.transition = '';
+        
         return;
     }
+    // Стандартная плавная анимация (fade out -> fade in)
     instruction.classList.remove('show');
     setTimeout(() => {
         instruction.textContent = text;
@@ -119,9 +129,8 @@ function initAudioSystem() {
         loadAllSounds();
     } catch (e) {
         console.error('Web Audio API issue:', e);
-        // Если аудио не работает, сразу помечаем как загруженное, чтобы не блокировать игру
         state.soundsLoaded = true; 
-        updateLoadingUI();
+        checkLoadingProgress();
     }
 }
 
@@ -134,11 +143,14 @@ async function loadSoundFile(name, url) {
             state.audioBuffers[name] = audioBuffer;
         }
     } catch (e) {
-        console.warn(`Звук ${name} не загружен (не критично):`, e);
+        console.warn(`Звук ${name} пропущен`);
+    } finally {
+        state.loadedAssets++;
+        checkLoadingProgress();
     }
 }
 
-async function loadAllSounds() {
+function loadAllSounds() {
     const sounds = {
         'start': 'sounds/start.mp3',
         'choose': 'sounds/choose.mp3',
@@ -150,24 +162,17 @@ async function loadAllSounds() {
         'loss': 'sounds/loss.mp3',
         'next': 'sounds/next.mp3'
     };
+    
+    const soundKeys = Object.keys(sounds);
+    state.totalAssets += soundKeys.length;
 
-    const promises = Object.entries(sounds).map(([name, url]) => loadSoundFile(name, url));
-    
-    // Ждем загрузки, но не блокируем вечно
-    try {
-        await Promise.all(promises);
-    } catch (err) {
-        console.warn('Ошибка загрузки части звуков');
-    }
-    
-    state.soundsLoaded = true;
-    updateLoadingUI();
+    soundKeys.forEach(name => {
+        loadSoundFile(name, sounds[name]);
+    });
 }
 
 function unlockAudio() {
     if (!state.audioContext || state.audioUnlocked) return;
-    
-    // Пытаемся разблокировать аудио контекст по клику
     if (state.audioContext.state === 'suspended') {
         state.audioContext.resume().then(() => {
             state.audioUnlocked = true;
@@ -184,9 +189,7 @@ function playSound(name) {
         source.buffer = state.audioBuffers[name];
         source.connect(state.audioContext.destination);
         source.start(0);
-    } catch(e) {
-        // Игнорируем ошибки воспроизведения
-    }
+    } catch(e) {}
 }
 
 const playStartSound = () => playSound('start');
@@ -216,20 +219,18 @@ async function loadPlayerData() {
             state.maxStreak = data.max_streak || 0;
         }
         updateStats();
-    } catch (e) {
-        console.warn('Supabase load error:', e);
-    }
+    } catch (e) { console.warn('Supabase load error:', e); }
 }
 
 async function resetStreakOnServer() {
     if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
     const user_id = tg.initDataUnsafe.user.id;
+    // Сброс серии на сервере в 0 (анти-чит)
     await supabaseClient.from('players').update({ streak: 0 }).eq('user_id', user_id);
 }
 
 async function savePlayerData() {
     if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
-
     const user = tg.initDataUnsafe.user;
     let userName = user.first_name || 'Unknown';
     if (user.last_name) userName += ' ' + user.last_name;
@@ -247,32 +248,18 @@ async function savePlayerData() {
 
 
 // ============================
-// GAME LOGIC
+// GAME LOGIC & LOADING
 // ============================
 
-function updateLoadingUI() {
-    // 1. Если уже всё готово, игнорируем вызов
-    if (state.resourcesReady) return;
+/**
+ * Финализирует процесс загрузки после того, как завершился fade out/in инструкции.
+ * Управляет появлением кнопки и запуском idle-анимации.
+ */
+function finalizeLoading() {
+    if (state.loadingFinalized) return;
+    state.loadingFinalized = true;
 
-    // 2. Проверяем условие готовности: Картинки И (Звуки ИЛИ Форс-старт)
-    const isReady = state.imagesLoaded && (state.soundsLoaded || state.forceLoaded);
-
-    if (!isReady) {
-        // Показываем процент (эмуляция)
-        let percent = 10;
-        if (state.imagesLoaded) percent += 50;
-        if (state.soundsLoaded) percent += 40;
-        setInstructionText(`Загрузка... ${percent}%`, true);
-        return;
-    }
-
-    // 3. Всё готово
-    state.resourcesReady = true;
-    console.log('✓ Игра готова к запуску');
-
-    setInstructionText("Начнём?"); 
-    
-    // Показываем кнопку
+    // 1. Показываем кнопку старта с анимацией
     elements.startBtn.classList.remove('hidden');
     elements.startBtn.style.opacity = '0';
     
@@ -281,20 +268,45 @@ function updateLoadingUI() {
         elements.startBtn.style.opacity = '1';
         elements.startBtn.disabled = false;
         elements.startBtn.style.pointerEvents = 'auto';
+
+        // ГАРАНТИЯ: Устанавливаем готовность к приему ввода (пробела)
         state.isButtonReady = true; 
-    }, 100);
-    
-    // FIX: Запускаем Idle анимацию ТОЛЬКО здесь.
-    // Это единственная точка входа, чтобы избежать дублирования.
-    if (state.gamePhase === 'idle') {
-        startIdleAnimation();
-    }
+        state.canPressSpace = true; 
+
+        // 2. Запускаем анимацию простоя (после появления кнопки)
+        if (state.gamePhase === 'idle') {
+            startIdleAnimation();
+        }
+    }, 50); // Небольшая задержка, чтобы кнопка сразу не 'прыгнула'
 }
 
-function preloadCriticalImages() {
-    ['skins/1.png', 'heads/1.png', 'bodies/1.png', 'accessories/1.png'].forEach(src => {
-        (new Image()).src = src;
-    });
+
+function checkLoadingProgress() {
+    if (state.resourcesReady) return;
+
+    let percent = 0;
+    if (state.totalAssets > 0) {
+        percent = Math.floor((state.loadedAssets / state.totalAssets) * 100);
+    }
+    
+    if (state.forceLoaded) percent = 100;
+    if (percent > 100) percent = 100;
+
+    if (percent < 100) {
+        // Обновление прогресса: используется мгновенное обновление текста
+        if (elements.instruction.textContent !== `Загрузка... ${percent}%`) {
+            setInstructionText(`Загрузка... ${percent}%`, true); 
+        }
+    } else {
+        state.resourcesReady = true;
+        console.log('✓ Загрузка завершена');
+
+        // 1. Плавный переход от "Загрузка 100%" к "Начнём?"
+        setInstructionText("Начнём?"); 
+        
+        // 2. Запускаем финализацию с задержкой, чтобы Fade Out/In текста завершился.
+        setTimeout(finalizeLoading, 350); 
+    }
 }
 
 function createRandomOrder() {
@@ -315,30 +327,31 @@ function getRandomOrderItem(type, index) {
     return state.loaded[type][realIndex];
 }
 
-async function loadImages() {
+function loadImages() {
     const folders = { skin: 'skins/', head: 'heads/', body: 'bodies/', accessory: 'accessories/' };
-    preloadCriticalImages();
     
-    const allPromises = [];
+    let totalImages = 0;
+    for (const type of state.parts) {
+        totalImages += state.partCounts[type];
+    }
+    state.totalAssets += totalImages;
 
     for (const type of state.parts) {
         state.loaded[type] = [];
         for (let i = 1; i <= state.partCounts[type]; i++) {
             const img = new Image();
-            const p = new Promise(resolve => {
-                img.onload = () => resolve(true);
-                img.onerror = () => { console.warn('Img err:', img.src); resolve(false); }; // Не реджектим, а резолвим
-            });
+            img.onload = () => {
+                state.loadedAssets++;
+                checkLoadingProgress();
+            };
+            img.onerror = () => {
+                state.loadedAssets++; 
+                checkLoadingProgress();
+            };
             img.src = `${folders[type]}${i}.png`;
-            allPromises.push(p);
             state.loaded[type].push({ id: i, img: img });
         }
     }
-    
-    // Ждем всех картинок
-    await Promise.all(allPromises);
-    state.imagesLoaded = true;
-    updateLoadingUI();
 }
 
 function render(container, data) {
@@ -379,7 +392,6 @@ function setupTouchHandlers() {
         
         button.addEventListener('touchend', function(e) {
             if (!state.touchStartedOnButton || state.currentTouchButton !== this) return;
-
             this.style.transform = '';
             
             const touch = e.changedTouches[0];
@@ -442,43 +454,33 @@ function startIdle() {
     state.gamePhase = 'idle';
     state.startBtnLock = false;
     state.resetBtnLock = false;
-    state.canPressSpace = true;
     state.resultScreenVisible = false;
     state.changeSoundPlayed = false;
     
     createRandomOrder();
     
-    // Если ресурсы еще не готовы, просто пытаемся обновить UI,
-    // но саму анимацию НЕ запускаем здесь (ее запустит updateLoadingUI)
     if (!state.resourcesReady) {
-        updateLoadingUI();
+        checkLoadingProgress();
         return;
     }
     
-    // Если ресурсы УЖЕ готовы (например, рестарт игры), запускаем.
-    startIdleAnimation();
+    if (state.resourcesReady && state.loadingFinalized) startIdleAnimation();
 }
 
-// FIX: Исправлена логика запуска анимации и удаление старых интервалов
 function startIdleAnimation() {
-    // Жёсткая очистка предыдущего цикла
     if (state.idleInterval) {
         cancelAnimationFrame(state.idleInterval);
         state.idleInterval = null;
     }
 
-    if (!state.imagesLoaded) return;
-    
-    // Убедимся, что мы в правильной фазе
     if (state.gamePhase !== 'idle') return;
-
-    elements.instruction.classList.add('show');
     
-    // Генерируем стартового
-    state.parts.forEach(p => {
-        const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
-        state.idleCharacter[p] = getRandomOrderItem(p, randomIndex);
-    });
+    if (!state.idleCharacter.skin) {
+        state.parts.forEach(p => {
+            const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
+            state.idleCharacter[p] = getRandomOrderItem(p, randomIndex);
+        });
+    }
     render(elements.characterDisplay, state.idleCharacter);
     
     let lastTime = 0;
@@ -486,7 +488,6 @@ function startIdleAnimation() {
     let isFirstFrame = true;
     
     const animateIdle = (timestamp) => {
-        // Если фаза сменилась (нажали старт), прерываем немедленно
         if (state.gamePhase !== 'idle') {
             state.idleInterval = null;
             return;
@@ -514,10 +515,8 @@ function startIdleAnimation() {
             }
             partIndex++; 
         }
-        
         state.idleInterval = requestAnimationFrame(animateIdle);
     };
-    
     state.idleInterval = requestAnimationFrame(animateIdle);
 }
 
@@ -569,9 +568,10 @@ function startGame() {
     state.isBusy = true;
     state.gamePhase = 'creating';
     state.changeSoundPlayed = false;
-    
+    state.canPressSpace = false; // Блокируем пробел при старте
+
     playStartSound();
-    stopIdle(); // Обязательно останавливаем анимацию простоя
+    stopIdle(); 
     setInstructionText("Создаём персонажа...");
     
     if (state.fastCycle) { cancelAnimationFrame(state.fastCycle); state.fastCycle = null; }
@@ -646,7 +646,8 @@ function finalizeTarget() {
 }
 
 function startSelecting() {
-    resetStreakOnServer(); // Анти-чит: сброс серии здесь
+    // Сброс серии на сервере в 0 именно здесь
+    resetStreakOnServer(); 
 
     state.gamePhase = 'selecting';
     state.currentPart = 0;
@@ -795,8 +796,8 @@ function reset() {
     }
 
     state.round++;
-    elements.instruction.textContent = welcomeText; 
-    elements.instruction.classList.remove('show');
+    // Убраны строки elements.instruction.textContent и elements.instruction.classList.remove('show'), 
+    // чтобы избежать мигания/скрытия текста до его появления.
     state.lastResult = null; 
     
     elements.resultScreen.classList.remove('show');
@@ -816,13 +817,22 @@ function reset() {
         elements.startBtn.disabled = false;
         elements.startBtn.style.pointerEvents = 'auto';
         
+        // 1. Возвращаем игровую область
+        elements.gameArea.classList.remove('hidden'); 
+        
+        // 2. МГНОВЕННО ПОКАЗЫВАЕМ ТЕКСТ ИНСТРУКЦИИ
+        setInstructionText(welcomeText, true); 
+
+        // ГАРАНТИЯ ИСПРАВЛЕНИЯ: Устанавливаем готовность к приему ввода (пробела)
         state.isButtonReady = false;
-        setTimeout(() => { state.isButtonReady = true; }, 300);
+        setTimeout(() => { 
+            state.isButtonReady = true; 
+            state.canPressSpace = true; 
+        }, 300);
         
         elements.resultAgainBtn.disabled = false;
         elements.selectBtn.classList.remove('show');
         elements.selectBtn.classList.add('hidden');
-        elements.gameArea.classList.remove('hidden');
         updateStats();
         
         setTimeout(startIdle, 100);
@@ -844,9 +854,14 @@ function updateStats() {
 window.addEventListener('keydown', function(e) {
     if (e.code === 'Space') {
         e.preventDefault();
+        
+        // Общие проверки
         if (state.isTimerActive || state.isBusy || state.gamePhase === 'memorizing' || state.gamePhase === 'creating') return;
+        
+        // Критическая проверка: разрешено ли нажатие
         if (!state.canPressSpace) return;
-        if (state.gamePhase === 'idle' && !state.isButtonReady) return;
+        
+        // Дополнительные проверки фазы
         if (state.gamePhase === 'finished' && !state.resultScreenVisible) return;
         if (state.gamePhase === 'selecting' && !state.canSelect) return;
         
@@ -868,7 +883,12 @@ document.addEventListener('selectstart', e => { e.preventDefault(); return false
 document.addEventListener('contextmenu', e => { e.preventDefault(); return false; });
 
 window.onload = async () => {
-    if (elements.instruction) setInstructionText("Загрузка... 0%", true); 
+    // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: ГАРАНТИЯ МГНОВЕННОГО ОТОБРАЖЕНИЯ "ЗАГРУЗКА..."
+    if (elements.instruction) {
+        // 1. Установка текста и мгновенное отображение
+        setInstructionText("Загрузка... 0%", true); 
+    }
+    
     if (elements.startBtn) {
         elements.startBtn.classList.add('hidden');
         elements.startBtn.disabled = true;
@@ -876,36 +896,29 @@ window.onload = async () => {
     
     initSupabase(); 
     initAudioSystem();
-    
-    // Safety Timeout: Если через 4 секунды игра не загрузилась (например, аудио зависло)
-    // мы принудительно открываем кнопку. Это фиксит Desktop TWA.
+
+    // Safety Timeout (4 сек)
     setTimeout(() => {
         if (!state.resourcesReady) {
             console.warn('Safety timeout: forcing game start');
             state.forceLoaded = true;
-            state.imagesLoaded = true; // Считаем картинки загруженными
-            updateLoadingUI();
+            checkLoadingProgress();
         }
     }, 4000);
 
     try {
-        // Мы не используем await Promise.all, чтобы блокировать запуск.
-        // Каждая функция (loadImages, loadAllSounds) сама вызовет updateLoadingUI, когда закончит.
         loadImages();
         loadPlayerData();
         
         if (tg) tg.ready();
         setupTouchHandlers();
         
-        // FIX: startIdle() отсюда УБРАН.
-        // Теперь только updateLoadingUI может вызвать startIdleAnimation.
-        // Но нам нужно задать начальное состояние фазы.
         state.gamePhase = 'idle';
         createRandomOrder();
 
     } catch (error) {
         console.error('Критическая ошибка:', error);
         state.forceLoaded = true;
-        updateLoadingUI();
+        checkLoadingProgress();
     }
 };
