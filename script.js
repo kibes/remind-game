@@ -235,6 +235,10 @@ function updateLoadingUI() {
             
             // НОВОЕ: Используем setInstructionText для плавного перехода на "Начнём?"
             setInstructionText("Начнём?"); 
+
+            // НОВОЕ ДЕЙСТВИЕ: Показываем область игры (game-area)
+            elements.gameArea.style.opacity = '1';
+            elements.gameArea.style.visibility = 'visible'; 
             
             // Анимация появления кнопки
             elements.startBtn.classList.remove('hidden');
@@ -712,12 +716,12 @@ function reset() {
     let welcomeText = "Начнём?";
     if (state.lastResult === 'win') {
         if (state.streak >= 60) {
-            welcomeText = "Максимальная сложность!"; // <--- НОВОЕ СООБЩЕНИЕ
+            welcomeText = "Максимальная сложность!";
         } else {
-            welcomeText = "Сложность повысилась!"; // <--- СТАРОЕ СООБЩЕНИЕ
+            welcomeText = "Сложность повысилась!";
         }
     } else if (state.lastResult === 'almost') {
-        welcomeText = "Попробуем ещё?";
+        welcomeText = "Сейчас получится!";
     } else if (state.lastResult === 'lose') {
         welcomeText = "Начнём сначала?";
     }
@@ -750,7 +754,12 @@ function reset() {
         elements.resultAgainBtn.disabled = false;
         elements.selectBtn.classList.remove('show');
         elements.selectBtn.classList.add('hidden');
+        
+        // ВОССТАНОВЛЕНИЕ ВИДИМОСТИ ИГРОВОЙ ОБЛАСТИ
         elements.gameArea.classList.remove('hidden');
+        elements.gameArea.style.opacity = '1';
+        elements.gameArea.style.visibility = 'visible';
+        
         updateStats();
         
         setTimeout(startIdle, 100);
@@ -807,6 +816,8 @@ window.onload = async () => {
         elements.startBtn.classList.add('hidden');
         elements.startBtn.disabled = true;
     }
+    
+    // ПРИМЕЧАНИЕ: gameArea (game-content) теперь скрыта в CSS по умолчанию
     
     initAudioSystem();
     try {
