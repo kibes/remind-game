@@ -19,13 +19,22 @@ let supabaseClient = null;
 function initSupabase() {
     // Проверяем, что библиотека Supabase уже загружена (должна быть в теге <script>)
     if (window.supabase && SUPABASE_URL !== 'ВАШ_SUPABASE_URL') {
+        // В старых версиях могло быть SUPABASE_KEY. Используем SUPABASE_ANON_KEY для ясности.
         supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         console.log('✓ Supabase клиент инициализирован');
     } else {
-        console.error('Ошибка: Библиотека Supabase не загружена или ключи не установлены!');
+        console.warn('Ошибка: Supabase ключи не установлены, или библиотека не загружена. Сохранение отключено.');
     }
 }
 
+
+// Telegram Web App интеграция
+let tg = null;
+if (window.Telegram && window.Telegram.WebApp) {
+    tg = window.Telegram.WebApp;
+    tg.expand();
+    tg.enableClosingConfirmation();
+}
 
 // Основной объект состояния игры
 const state = {
@@ -152,7 +161,6 @@ async function loadAllSounds() {
     await Promise.all(promises);
     state.soundsLoaded = true;
     console.log('✓ Все звуки загружены');
-    // Вызываем проверку UI, так как звуки могли загрузиться последними
     updateLoadingUI();
 }
 
@@ -284,7 +292,6 @@ function checkImagesLoaded() {
     return { allLoaded, loadedCount, totalCount };
 }
 
-// ИЗМЕНЕНИЕ: Теперь показывает процент загрузки и обеспечивает плавный переход
 function updateLoadingUI() {
     const imgStatus = checkImagesLoaded();
     const everythingLoaded = imgStatus.allLoaded && state.soundsLoaded;
@@ -308,33 +315,26 @@ function updateLoadingUI() {
 
 
     if (!everythingLoaded) {
-        // Показываем прогресс в процентах
         const progressText = `Загрузка... ${progressPercent}%`;
         if (elements.instruction.textContent !== progressText) {
             elements.instruction.textContent = progressText;
         }
         
-        // Гарантированно скрываем кнопку
         elements.startBtn.classList.add('hidden');
         elements.startBtn.disabled = true;
         elements.startBtn.style.opacity = '0'; 
         state.isButtonReady = false;
         
-        // Повторная проверка через 500мс
         setTimeout(updateLoadingUI, 500);
     } else {
-        // Если уже всё загружено, но мы еще не инициализировали фазу
         if (!state.imagesLoaded) {
             state.imagesLoaded = true;
             
-            // НОВОЕ: Используем setInstructionText для плавного перехода на "Начнём?"
             setInstructionText("Начнём?"); 
             
-            // Анимация появления кнопки
             elements.startBtn.classList.remove('hidden');
             elements.startBtn.style.opacity = '0';
             
-            // Плавное появление
             setTimeout(() => {
                 elements.startBtn.style.transition = 'opacity 0.3s ease';
                 elements.startBtn.style.opacity = '1';
@@ -493,7 +493,6 @@ function startIdle() {
     
     createRandomOrder();
     
-    // Если еще грузимся - выходим, UI обновит updateLoadingUI
     if (!state.imagesLoaded || !state.soundsLoaded) {
         updateLoadingUI();
         return;
@@ -501,9 +500,11 @@ function startIdle() {
     startIdleAnimation();
 }
 
+// ИЗМЕНЕННАЯ ЛОГИКА: Смена одного атрибута по очереди, чтобы избежать "двойной смены"
 function startIdleAnimation() {
     elements.instruction.classList.add('show');
     
+    // Инициализация персонажа случайными частями
     state.parts.forEach(p => {
         const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
         state.idleCharacter[p] = getRandomOrderItem(p, randomIndex);
@@ -511,27 +512,41 @@ function startIdleAnimation() {
     render(elements.characterDisplay, state.idleCharacter);
     
     let lastTime = 0;
+    let partIndex = 0; // Для циклической смены
+    
     const animateIdle = (timestamp) => {
         if (!state.idleInterval) return;
-        if (timestamp - lastTime > 1000) {
+        
+        // Смена атрибута происходит только раз в секунду
+        if (timestamp - lastTime > 1000) { 
             lastTime = timestamp;
-            const p = state.parts[Math.floor(Math.random() * state.parts.length)];
+            
+            // Выбираем часть по циклу (skin, head, body, accessory, skin, ...)
+            const p = state.parts[partIndex % state.parts.length];
+            
             let next;
+            // Находим новый, случайный элемент
             do { 
                 const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
                 next = getRandomOrderItem(p, randomIndex); 
             } while (next && next.id === state.idleCharacter[p]?.id);
             
             if (next) {
+                // Обновление
                 state.idleCharacter[p] = next;
                 render(elements.characterDisplay, state.idleCharacter);
             }
+            
+            partIndex++; // Переходим к следующей части для следующей секунды
         }
+        
         if (state.gamePhase === 'idle') requestAnimationFrame(animateIdle);
     };
+    
     if (state.idleInterval) cancelAnimationFrame(state.idleInterval);
     state.idleInterval = requestAnimationFrame(animateIdle);
 }
+
 
 function stopIdle() { 
     if (state.idleInterval) {
@@ -657,7 +672,6 @@ function finalizeTarget() {
     }, 500);
 }
 
-// ИЗМЕНЕНИЕ: Добавлен звук next.mp3 при появлении первого атрибута
 function startSelecting() {
     state.gamePhase = 'selecting';
     state.currentPart = 0;
@@ -671,7 +685,6 @@ function startSelecting() {
     render(elements.characterDisplay, state.selection);
     setInstructionText(`Выбери ${getLabel(firstType)}`);
     
-    // Звук при первом появлении атрибута
     playNextSound();
     
     setTimeout(() => {
@@ -681,7 +694,6 @@ function startSelecting() {
     }, 400);
 }
 
-// nextCycle с проигрыванием звука при каждой прокрутке
 function nextCycle() {
     if (state.currentPart >= state.parts.length) { finish(); return; }
     
@@ -698,7 +710,6 @@ function nextCycle() {
         state.selection[type] = getRandomOrderItem(type, idx);
         render(elements.characterDisplay, state.selection);
         
-        // Звук при каждой смене предмета во время прокрутки
         playNextSound();
     };
     state.interval = setInterval(cycle, finalSpeed);
@@ -709,7 +720,6 @@ function getLabel(t) {
     return {skin:'цвет кожи', head:'голову', body:'тело', accessory:'аксессуар'}[t]; 
 }
 
-// ИЗМЕНЕНИЕ: Добавлен звук next.mp3 при переходе к следующему атрибуту
 function select() {
     if (!state.canSelect || state.gamePhase !== 'selecting') return false;
     
@@ -729,7 +739,6 @@ function select() {
         render(elements.characterDisplay, state.selection);
         setInstructionText(`Выбери ${getLabel(nextType)}`);
         
-        // Звук при появлении следующего атрибута
         playNextSound(); 
         
         setTimeout(() => { state.canSelect = true; nextCycle(); }, 150);
@@ -797,7 +806,6 @@ function finish() {
     }, 400);
 }
 
-// ВОЗВРАЩЕННАЯ ЛОГИКА: Динамический текст приветствия
 function reset() {
     if (state.resetBtnLock || state.isBusy) return;
     
@@ -810,9 +818,9 @@ function reset() {
     let welcomeText = "Начнём?";
     if (state.lastResult === 'win') {
         if (state.streak >= 60) {
-            welcomeText = "Максимальная сложность!"; // <--- НОВОЕ СООБЩЕНИЕ
+            welcomeText = "Максимальная сложность!";
         } else {
-            welcomeText = "Сложность повысилась!"; // <--- СТАРОЕ СООБЩЕНИЕ
+            welcomeText = "Сложность повысилась!";
         }
     } else if (state.lastResult === 'almost') {
         welcomeText = "Попробуем ещё?";
@@ -893,7 +901,7 @@ document.addEventListener('touchend', function(e) {
 document.addEventListener('selectstart', e => { e.preventDefault(); return false; });
 document.addEventListener('contextmenu', e => { e.preventDefault(); return false; });
 
-// ИЗМЕНЕНИЕ: Мгновенное отображение "Загрузка..."
+// ИЗМЕНЕНИЕ: Мгновенное отображение "Загрузка..." и вызов initSupabase/loadPlayerData
 window.onload = async () => {
     // 1. Мгновенное отображение надписи "Загрузка..."
     if (elements.instruction) {
@@ -910,19 +918,19 @@ window.onload = async () => {
     initAudioSystem();
     
     try {
-        await loadImages();
+        // Загрузка изображений и данных игрока происходит параллельно
+        const loadPromises = [
+            loadImages(),
+            loadPlayerData()
+        ];
+        
+        await Promise.all(loadPromises);
         
         if (tg) tg.ready();
-        
-        // --- ЗАГРУЗКА ДАННЫХ ИГРОКА ---
-        await loadPlayerData(); 
-        // ------------------------------
-        
         setupTouchHandlers();
         startIdle();
     } catch (error) {
-        console.error('Ошибка:', error);
-        // В случае ошибки, запускаем процесс, чтобы он показал ошибку или прогресс
+        console.error('Критическая ошибка:', error);
         updateLoadingUI(); 
         startIdle();
     }
