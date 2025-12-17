@@ -202,11 +202,11 @@ function playSound(name) {
 function toggleSound() {
     state.isMuted = !state.isMuted;
     elements.soundBtn.classList.toggle('muted', state.isMuted);
-    playSound('choose');
+    playSound('next');
 }
 
 async function showLeaderboard() {
-    playSound('choose');
+    playSound('next');
     elements.leaderboardOverlay.classList.add('show');
     elements.leaderboardList.innerHTML = '<div style="text-align:center; color:#db4e4e">Загрузка...</div>';
     elements.userRankContainer.innerHTML = '';
@@ -264,7 +264,7 @@ function renderLeaderboard(players, myRank) {
     if (!isInTop5 && tg?.initDataUnsafe?.user) {
         const myName = tg.initDataUnsafe.user.first_name || 'Вы';
         elements.userRankContainer.innerHTML = `
-            <div style="margin-top:10px; border-top: 1px dashed #db4e4e; padding-top:10px;">
+            <div style="margin: 15px auto 10px; border-top: 2px solid #db4e4e; padding-top: 10px; width: 80%;">
                 <div class="leader-item user-special">
                     <span class="rank">${myRank}</span>
                     <span class="name">${myName}</span>
@@ -276,6 +276,7 @@ function renderLeaderboard(players, myRank) {
 }
 
 function closeLeaderboard() {
+    playSound('repeat'); // Звук закрытия
     elements.leaderboardOverlay.classList.remove('show');
 }
 
@@ -526,6 +527,21 @@ function setupTouchHandlers() {
         if(e.detail === 0) return;
         handleResetButton(); 
     });
+
+    const closeLbBtn = document.getElementById('close-leaderboard');
+    if (closeLbBtn) {
+        closeLbBtn.onclick = () => {
+            playSound('repeat'); // Или любой другой звук из твоего списка
+            
+            // Скрываем оверлей (проверь название переменной в своем коде)
+            if (elements.leaderboardOverlay) {
+                elements.leaderboardOverlay.classList.remove('active');
+            } else {
+                // Если ты используешь прямую работу с ID
+                document.getElementById('leaderboard-overlay').classList.remove('active');
+            }
+        };
+    }
 }
 
 function handleStartButton() {
