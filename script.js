@@ -296,6 +296,8 @@ async function loadPlayerData() {
     if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
     try {
         const user_id = tg.initDataUnsafe.user.id;
+        
+        // Пытаемся получить данные игрока
         const { data, error } = await supabaseClient
             .from('players')
             .select('*')
@@ -303,11 +305,18 @@ async function loadPlayerData() {
             .single();
 
         if (data) {
+            // Если игрок найден, загружаем его прогресс
             state.streak = data.streak || 0;
             state.maxStreak = data.max_streak || 0;
+            updateStats();
+        } else {
+            // Если игрока нет в базе (data === null) — это новый пользователь
+            console.log('Новый игрок! Регистрируем в базе...');
+            await savePlayerData(); // Создаем запись сразу
         }
-        updateStats();
-    } catch (e) { console.warn('Supabase load error:', e); }
+    } catch (e) { 
+        console.warn('Supabase load/register error:', e); 
+    }
 }
 
 async function resetStreakOnServer() {
