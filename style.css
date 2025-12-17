@@ -629,7 +629,7 @@ h1 {
 
 .close-modal {
     position: absolute;
-    top: 15px; right: 15px;
+    top: 10px; right: 20px;
     background: none; border: none;
     font-size: 30px; color: #db4e4e;
     cursor: pointer; font-weight: bold;

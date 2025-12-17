@@ -169,6 +169,7 @@ function loadAllSounds() {
         'loss': 'sounds/loss.mp3',
         'next': 'sounds/next.mp3'
     };
+    let activeAudioStreams = []; // Массив для хранения играющих сейчас звуков
     
     const soundKeys = Object.keys(sounds);
     state.totalAssets += soundKeys.length;
@@ -190,19 +191,20 @@ function unlockAudio() {
 }
 
 function playSound(name) {
-    if (state.isMuted) return; // Проверка на беззвучный режим
-    if (!state.audioContext || !state.audioBuffers[name] || !state.audioUnlocked) return;
-    try {
-        const source = state.audioContext.createBufferSource();
-        source.buffer = state.audioBuffers[name];
-        source.connect(state.audioContext.destination);
-        source.start(0);
-    } catch(e) {}
-}
-function toggleSound() {
-    state.isMuted = !state.isMuted;
-    elements.soundBtn.classList.toggle('muted', state.isMuted);
-    playSound('next');
+    if (state.isMuted || !sounds[name]) return;
+    
+    const audio = new Audio(sounds[name]);
+    audio.volume = 0.5;
+    
+    // Добавляем в список активных
+    activeAudioStreams.push(audio);
+    
+    audio.play().catch(e => console.warn("Audio play blocked"));
+    
+    // Когда звук доиграл, удаляем его из списка
+    audio.onended = () => {
+        activeAudioStreams = activeAudioStreams.filter(s => s !== audio);
+    };
 }
 
 async function showLeaderboard() {
@@ -467,7 +469,26 @@ function setupTouchHandlers() {
     document.addEventListener('touchstart', globalUnlock, { passive: true });
     document.addEventListener('click', globalUnlock, { passive: true });
     // Внутри функции инициализации или window.onload
-    elements.soundBtn.addEventListener('click', toggleSound);
+    elements.soundBtn.addEventListener('click', () => {
+        state.isMuted = !state.isMuted;
+        localStorage.setItem('muted', state.isMuted);
+        
+        if (state.isMuted) {
+            elements.soundBtn.classList.add('muted');
+            
+            // --- НОВЫЙ БЛОК: Останавливаем всё, что поет прямо сейчас ---
+            activeAudioStreams.forEach(audio => {
+                audio.pause();   // Ставим на паузу
+                audio.currentTime = 0; // Сбрасываем в начало
+            });
+            activeAudioStreams = []; // Очищаем массив
+            // -----------------------------------------------------------
+            
+        } else {
+            elements.soundBtn.classList.remove('muted');
+            playSound('click'); // Опционально: звук подтверждения включения
+        }
+    });
     elements.leaderboardBtn.addEventListener('click', showLeaderboard);
     elements.closeLeaderboard.addEventListener('click', closeLeaderboard);
     elements.leaderboardOverlay.addEventListener('click', (e) => {
