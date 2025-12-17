@@ -629,7 +629,7 @@ h1 {
 
 .close-modal {
     position: absolute;
-    top: 15px; right: 20px;
+    top: 15px; right: 15px;
     background: none; border: none;
     font-size: 30px; color: #db4e4e;
     cursor: pointer; font-weight: bold;
@@ -727,6 +727,10 @@ h1 {
 
 .leader-item.user-special {
     background: #db4e4e;
+}
+.leader-item.user-special .rank,
+.leader-item.user-special .name,
+.leader-item.user-special .score {
     color: white !important;
 }
 
@@ -751,6 +755,7 @@ h1 {
     background: #db4e4e;
     transform: rotate(45deg);
 }
+
 
 /* ОПТИМИЗАЦИЯ ДЛЯ TELEGRAM И МОБИЛЬНЫХ */
 @media (hover: none) {

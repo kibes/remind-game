@@ -264,12 +264,12 @@ function renderLeaderboard(players, myRank) {
     if (!isInTop5 && tg?.initDataUnsafe?.user) {
         const myName = tg.initDataUnsafe.user.first_name || 'Вы';
         elements.userRankContainer.innerHTML = `
-            <div style="margin: 15px auto 10px; border-top: 2px solid #db4e4e; padding-top: 10px; width: 80%;">
-                <div class="leader-item user-special">
-                    <span class="rank">${myRank}</span>
-                    <span class="name">${myName}</span>
-                    <span class="score">${state.maxStreak}</span>
-                </div>
+            <div style="width: 80%; margin: 15px auto; border-top: 2px solid #db4e4e;"></div>
+            
+            <div class="leader-item user-special">
+                <span class="rank">${myRank}</span>
+                <span class="name">${myName}</span>
+                <span class="score">${state.maxStreak}</span>
             </div>
         `;
     }
