@@ -169,7 +169,6 @@ function loadAllSounds() {
         'loss': 'sounds/loss.mp3',
         'next': 'sounds/next.mp3'
     };
-
     
     const soundKeys = Object.keys(sounds);
     state.totalAssets += soundKeys.length;
