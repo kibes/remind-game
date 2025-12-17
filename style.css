@@ -552,6 +552,177 @@ h1 {
     transition-duration: 0.05s;
 }
 
+/* Кнопки в углах */
+.icon-btn {
+    background: none;
+    border: none;
+    position: absolute;
+    top: 25px;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    color: #db4e4e;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s, background-color 0.2s;
+    z-index: 15;
+    -webkit-tap-highlight-color: transparent;
+        outline: none;
+}
+
+.icon-btn.left { left: 25px; }
+.icon-btn.right { right: 25px; }
+
+.icon-btn:active { transform: scale(0.9); }
+
+/* Модальное окно лидеров */
+.overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    backdrop-filter: blur(4px);
+}
+
+.overlay.show { display: flex; }
+
+.modal {
+    background: white;
+    width: 90%;
+    max-width: 400px;
+    border-radius: 35px;
+    padding: 25px;
+    position: relative;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+    font-family: 'Montserrat', sans-serif;
+}
+
+.close-modal {
+    position: absolute;
+    top: 15px; right: 20px;
+    background: none; border: none;
+    font-size: 30px; color: #db4e4e;
+    cursor: pointer; font-weight: bold;
+}
+
+.modal-title {
+    text-align: center;
+    color: #db4e4e;
+    margin-bottom: 20px;
+    font-size: 24px;
+    font-weight: 800;
+}
+.leaderboard-header {
+    font-family: 'Montserrat', sans-serif;
+    display: flex;
+    align-items: center;
+    padding: 0 10px 15px;
+    gap: 10px;
+    font-size: 11px;
+    font-weight: 800;
+    color: #db4e4e;
+    text-transform: lowercase;
+}
+
+/* Настраиваем ширину точно так же, как в твоих .rank, .name и .score */
+.h-rank { 
+    font-weight: 600;
+    width: 30px; 
+    text-align: center;
+}
+
+.h-name { 
+    font-weight: 600;
+    flex: 1; 
+    padding: 0 10px;
+    text-align: left;
+}
+
+.h-score { 
+    font-weight: 600;
+    width: 100px; /* Подбери под ширину своего .score */
+    text-align: right;
+}
+
+.leaderboard-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+/* Первое место — Золото */
+.leaderboard-list .leader-item:nth-child(1) {
+    border-color: #ffa600;
+}
+.leaderboard-list .leader-item:nth-child(1) .rank,
+.leader-item:nth-child(1) .name,
+.leader-item:nth-child(1) .score {
+    color: #ffa600;
+}
+
+/* Второе место — Серебро */
+.leaderboard-list .leader-item:nth-child(2) {
+    border-color: #C0C0C0;
+}
+.leaderboard-list .leader-item:nth-child(2) .rank,
+.leader-item:nth-child(2) .name,
+.leader-item:nth-child(2) .score {
+    color: #C0C0C0;
+}
+
+/* Третье место — Бронза */
+.leaderboard-list .leader-item:nth-child(3) {
+    border-color: #d76528;
+}
+.leaderboard-list .leader-item:nth-child(3) .rank,
+.leader-item:nth-child(3) .name,
+.leader-item:nth-child(3) .score {
+    color: #d76528;
+}
+
+.leader-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 20px;
+    border-radius: 20px;
+    border: 2px solid #db4e4e;
+    background: white;
+    color: #db4e4e;
+}
+
+.leader-item.user-special {
+    background: #db4e4e;
+    color: white;
+    border-color: white;
+}
+
+.rank { width: 30px; font-weight: 800; font-size: 18px; }
+.name { 
+    flex: 1; 
+    font-family: 'Comfortaa', cursive; 
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 10px;
+}
+.score { font-weight: 800; font-size: 18px; }
+
+
+.muted::after {
+    content: '';
+    position: absolute;
+    width: 2px;
+    height: 30px;
+    background: #db4e4e;
+    transform: rotate(45deg);
+}
+
 /* ОПТИМИЗАЦИЯ ДЛЯ TELEGRAM И МОБИЛЬНЫХ */
 @media (hover: none) {
     .btn:hover, .result-btn:hover {

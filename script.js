@@ -43,6 +43,7 @@ const state = {
     idleCharacter: {},
     lastResult: null,
     isBusy: false,
+    isMuted: false,
     isTimerActive: false,
     gamePhase: 'idle',
     fastCycle: null,
@@ -86,7 +87,13 @@ const elements = {
     resultPercent: document.getElementById('result-percent'),
     resultText: document.getElementById('result-text'),
     resultTarget: document.getElementById('result-target'),
-    resultPlayer: document.getElementById('result-player')
+    resultPlayer: document.getElementById('result-player'),
+    soundBtn: document.getElementById('sound-btn'),
+    leaderboardBtn: document.getElementById('leaderboard-btn'),
+    leaderboardOverlay: document.getElementById('leaderboard-overlay'),
+    leaderboardList: document.getElementById('leaderboard-list'),
+    userRankContainer: document.getElementById('user-rank-container'),
+    closeLeaderboard: document.getElementById('close-leaderboard')
 };
 
 if (elements.characterDisplay) {
@@ -183,6 +190,7 @@ function unlockAudio() {
 }
 
 function playSound(name) {
+    if (state.isMuted) return; // Проверка на беззвучный режим
     if (!state.audioContext || !state.audioBuffers[name] || !state.audioUnlocked) return;
     try {
         const source = state.audioContext.createBufferSource();
@@ -190,6 +198,85 @@ function playSound(name) {
         source.connect(state.audioContext.destination);
         source.start(0);
     } catch(e) {}
+}
+function toggleSound() {
+    state.isMuted = !state.isMuted;
+    elements.soundBtn.classList.toggle('muted', state.isMuted);
+    playSound('choose');
+}
+
+async function showLeaderboard() {
+    playSound('choose');
+    elements.leaderboardOverlay.classList.add('show');
+    elements.leaderboardList.innerHTML = '<div style="text-align:center; color:#db4e4e">Загрузка...</div>';
+    elements.userRankContainer.innerHTML = '';
+
+    if (!supabaseClient) {
+        elements.leaderboardList.innerHTML = '<div style="text-align:center; color:#db4e4e">База данных недоступна</div>';
+        return;
+    }
+
+    try {
+        // 1. Получаем ТОП-5
+        const { data: topPlayers, error } = await supabaseClient
+            .from('players')
+            .select('username, max_streak, user_id')
+            .order('max_streak', { ascending: false })
+            .limit(5);
+
+        if (error) throw error;
+
+        // 2. Получаем место текущего пользователя (считаем сколько людей имеют рекорд выше)
+        let userRank = "?";
+        if (tg?.initDataUnsafe?.user) {
+            const { count } = await supabaseClient
+                .from('players')
+                .select('*', { count: 'exact', head: true })
+                .gt('max_streak', state.maxStreak);
+            userRank = (count || 0) + 1;
+        }
+
+        renderLeaderboard(topPlayers, userRank);
+    } catch (e) {
+        console.error(e);
+        elements.leaderboardList.innerHTML = 'Ошибка загрузки';
+    }
+}
+
+function renderLeaderboard(players, myRank) {
+    elements.leaderboardList.innerHTML = '';
+    const currentUserId = tg?.initDataUnsafe?.user?.id;
+
+    players.forEach((player, index) => {
+        const isMe = player.user_id === currentUserId;
+        const item = document.createElement('div');
+        item.className = `leader-item ${isMe ? 'user-special' : ''}`;
+        item.innerHTML = `
+            <span class="rank">${index + 1}</span>
+            <span class="name">${player.username || 'Аноним'}</span>
+            <span class="score">${player.max_streak}</span>
+        `;
+        elements.leaderboardList.appendChild(item);
+    });
+
+    // Если игрока нет в топ-5, показываем его отдельно внизу
+    const isInTop5 = players.some(p => p.user_id === currentUserId);
+    if (!isInTop5 && tg?.initDataUnsafe?.user) {
+        const myName = tg.initDataUnsafe.user.first_name || 'Вы';
+        elements.userRankContainer.innerHTML = `
+            <div style="margin-top:10px; border-top: 1px dashed #db4e4e; padding-top:10px;">
+                <div class="leader-item user-special">
+                    <span class="rank">${myRank}</span>
+                    <span class="name">${myName}</span>
+                    <span class="score">${state.maxStreak}</span>
+                </div>
+            </div>
+        `;
+    }
+}
+
+function closeLeaderboard() {
+    elements.leaderboardOverlay.classList.remove('show');
 }
 
 const playStartSound = () => playSound('start');
@@ -378,6 +465,13 @@ function setupTouchHandlers() {
     };
     document.addEventListener('touchstart', globalUnlock, { passive: true });
     document.addEventListener('click', globalUnlock, { passive: true });
+    // Внутри функции инициализации или window.onload
+    elements.soundBtn.addEventListener('click', toggleSound);
+    elements.leaderboardBtn.addEventListener('click', showLeaderboard);
+    elements.closeLeaderboard.addEventListener('click', closeLeaderboard);
+    elements.leaderboardOverlay.addEventListener('click', (e) => {
+        if (e.target === elements.leaderboardOverlay) closeLeaderboard();
+    });
 
     buttons.forEach(button => {
         if (!button) return;
@@ -674,8 +768,8 @@ function nextCycle() {
     if (state.currentPart >= state.parts.length) { finish(); return; }
     
     const type = state.parts[state.currentPart];
-    let baseSpeed = 1200 - (state.currentPart * 184);
-    let finalSpeed = state.streak > 0 ? baseSpeed * Math.pow(0.968, state.streak) : baseSpeed;
+    let baseSpeed = 1200 - (state.currentPart * 106);
+    let finalSpeed = state.streak > 0 ? baseSpeed * Math.pow(0.969, state.streak) : baseSpeed;
     finalSpeed = Math.max(finalSpeed, 250);
     
     let idx = 0;
@@ -788,7 +882,7 @@ function reset() {
     
     let welcomeText = "Начнём?";
     if (state.lastResult === 'win') {
-        welcomeText = state.streak >= 60 ? "Максимальная сложность!" : "Сложность повысилась!";
+        welcomeText = state.streak >= 50 ? "Максимальная сложность!" : "Сложность повысилась!";
     } else if (state.lastResult === 'almost') {
         welcomeText = "Попробуем ещё?";
     } else if (state.lastResult === 'lose') {

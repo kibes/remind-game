@@ -20,7 +20,19 @@
 <body>
     <div class="game-container">
         <div class="header">
+            <button class="icon-btn left" id="sound-btn" title="Звук">
+                <svg id="sound-icon" viewBox="0 0 24 24" width="30" height="30">
+                    <path fill="currentColor" d="M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.85 14,18.71V20.77C18.01,19.86 21,16.28 21,12C21,7.72 18.01,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16.03C15.5,15.29 16.5,13.77 16.5,12M3,9V15H7L12,20V4L7,9H3Z" />
+                </svg>
+            </button>
+                
             <h1>bemind</h1>
+                
+            <button class="icon-btn right" id="leaderboard-btn" title="Лидеры">
+                <svg viewBox="0 0 24 24" width="30" height="30">
+                    <path fill="currentColor" d="M3,6H21V8H3V6M3,11H21V13H3V11M3,16H21V18H3V16Z" />
+                </svg>
+            </button>
             <div class="stats">
                 <div class="stat">
                     <div class="stat-label">Игра</div>
@@ -71,7 +83,21 @@
             </div>
         </div>
     </div>
-
+    <div class="overlay" id="leaderboard-overlay">
+        <div class="modal">
+            <button class="close-modal" id="close-leaderboard">&times;</button>
+            <h2 class="modal-title">Топ игроков</h2>
+            <div class="leaderboard-header">
+                    <span class="h-rank">место</span>
+                    <span class="h-name">имя</span>
+                    <span class="h-score">рекорд</span>
+                </div>
+            <div class="leaderboard-list" id="leaderboard-list">
+                </div>
+            <div class="user-rank-container" id="user-rank-container">
+                </div>
+        </div>
+    </div>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="script.js"></script>
