@@ -293,54 +293,62 @@ const playTimerSound = (num) => { if(num >= 0) playSound('timer'); };
 // ============================
 
 async function loadPlayerData() {
-    if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
+    if (!supabaseClient || !tg?.initDataUnsafe?.user) return;
+    
     try {
         const user_id = tg.initDataUnsafe.user.id;
-        
-        // Пытаемся получить данные игрока
         const { data, error } = await supabaseClient
             .from('players')
-            .select('*')
+            .select('streak, max_streak')
             .eq('user_id', user_id)
-            .single();
+            .maybeSingle(); // Важно: не выдает ошибку, если записи нет
+
+        if (error) {
+            console.error('Ошибка загрузки (сеть/БД):', error);
+            return; // Просто выходим, state остается начальным, но БД не трогаем
+        }
 
         if (data) {
-            // Если игрок найден, загружаем его прогресс
             state.streak = data.streak || 0;
             state.maxStreak = data.max_streak || 0;
             updateStats();
-        } else {
-            // Если игрока нет в базе (data === null) — это новый пользователь
-            console.log('Новый игрок! Регистрируем в базе...');
-            await savePlayerData(); // Создаем запись сразу
         }
-    } catch (e) { 
-        console.warn('Supabase load/register error:', e); 
+    } catch (e) {
+        console.error('Критический сбой в loadPlayerData:', e);
     }
 }
+
 
 async function resetStreakOnServer() {
     if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
     const user_id = tg.initDataUnsafe.user.id;
+    if (tg) tg.enableClosingConfirmation();
     // Сброс серии на сервере в 0 (анти-чит)
     await supabaseClient.from('players').update({ streak: 0 }).eq('user_id', user_id);
 }
 
 async function savePlayerData() {
-    if (!supabaseClient || !tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
+    if (!supabaseClient || !tg?.initDataUnsafe?.user) return;
+
     const user = tg.initDataUnsafe.user;
-    let userName = user.first_name || 'Unknown';
-    if (user.last_name) userName += ' ' + user.last_name;
 
     const playerData = {
         user_id: user.id,
-        username: userName, 
+        username: (user.first_name || 'Unknown') + (user.last_name ? ' ' + user.last_name : ''),
         streak: state.streak,
         max_streak: state.maxStreak,
-        updated_at: new Date() 
+        updated_at: new Date().toISOString()
     };
 
-    await supabaseClient.from('players').upsert(playerData, { onConflict: 'user_id' });
+    const { error } = await supabaseClient
+        .from('players')
+        .upsert(playerData, { onConflict: 'user_id' });
+
+    if (!error) {
+        tg.disableClosingConfirmation(); // Сохранение успешно — разрешаем выход
+    } else {
+        console.error("Ошибка при сохранении результата:", error);
+    }
 }
 
 
@@ -952,7 +960,6 @@ function reset() {
         elements.resultAgainBtn.disabled = false;
         elements.selectBtn.classList.remove('show');
         elements.selectBtn.classList.add('hidden');
-        updateStats();
         
         setTimeout(startIdle, 100);
     }, 400);
@@ -991,6 +998,7 @@ window.addEventListener('keydown', function(e) {
         else if (state.gamePhase === 'finished' && !state.resetBtnLock && state.resultScreenVisible) reset();
     }
 });
+
 
 document.addEventListener('touchend', function(e) {
     const now = Date.now();
