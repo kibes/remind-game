@@ -32,7 +32,7 @@ const state = {
     target: {},
     selection: {},
     parts: ['skin', 'head', 'body', 'accessory'],
-    partCounts: { skin: 4, head: 7, body: 8, accessory: 7 },
+    partCounts: { skin: 4, head: 7, body: 8, accessory: 7},
     loaded: {},
     order: {},
     interval: null,
@@ -44,6 +44,7 @@ const state = {
     isBusy: false,
     isMuted: false,
     isTimerActive: false,
+    isDataLoaded: false,
     gamePhase: 'idle',
     fastCycle: null,
     startBtnLock: false,
@@ -292,7 +293,10 @@ const playTimerSound = (num) => { if(num >= 0) playSound('timer'); };
 // ============================
 
 async function loadPlayerData() {
-    if (!supabaseClient || !tg?.initDataUnsafe?.user) return;
+    if (!supabaseClient || !tg?.initDataUnsafe?.user) {
+        state.isDataLoaded = true; // Считаем загруженным для анонимов
+        return;
+    }
     
     try {
         const user_id = tg.initDataUnsafe.user.id;
@@ -300,20 +304,17 @@ async function loadPlayerData() {
             .from('players')
             .select('streak, max_streak')
             .eq('user_id', user_id)
-            .maybeSingle(); // Важно: не выдает ошибку, если записи нет
+            .maybeSingle();
 
-        if (error) {
-            console.error('Ошибка загрузки (сеть/БД):', error);
-            return; // Просто выходим, state остается начальным, но БД не трогаем
-        }
-
-        if (data) {
+        if (!error && data) {
             state.streak = data.streak || 0;
             state.maxStreak = data.max_streak || 0;
             updateStats();
         }
     } catch (e) {
         console.error('Критический сбой в loadPlayerData:', e);
+    } finally {
+        state.isDataLoaded = true; // ГАРАНТИРУЕМ установку флага
     }
 }
 
@@ -327,26 +328,28 @@ async function resetStreakOnServer() {
 }
 
 async function savePlayerData() {
-    if (!supabaseClient || !tg?.initDataUnsafe?.user) return;
+    // Проверка загрузки данных и наличия клиента
+    if (!state.isDataLoaded || !supabaseClient || !tg?.initDataUnsafe?.user) return;
 
     const user = tg.initDataUnsafe.user;
 
-    const playerData = {
-        user_id: user.id,
-        username: (user.first_name || 'Unknown') + (user.last_name ? ' ' + user.last_name : ''),
-        streak: state.streak,
-        max_streak: state.maxStreak,
-        updated_at: new Date().toISOString()
-    };
+    try {
+        // Вызываем нашу SQL-функцию через RPC
+        const { error } = await supabaseClient.rpc('update_player_progress', {
+            p_user_id: user.id,
+            p_username: (user.first_name || 'Unknown') + (user.last_name ? ' ' + user.last_name : ''),
+            p_streak: state.streak,
+            p_max_streak: state.maxStreak
+        });
 
-    const { error } = await supabaseClient
-        .from('players')
-        .upsert(playerData, { onConflict: 'user_id' });
-
-    if (!error) {
-        tg.disableClosingConfirmation(); // Сохранение успешно — разрешаем выход
-    } else {
-        console.error("Ошибка при сохранении результата:", error);
+        if (!error) {
+            tg.disableClosingConfirmation();
+            console.log("✓ Данные успешно синхронизированы с защитой рекорда");
+        } else {
+            console.error("Ошибка RPC:", error);
+        }
+    } catch (e) {
+        console.error("Сбой при вызове сохранения:", e);
     }
 }
 

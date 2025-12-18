@@ -698,35 +698,35 @@ h1 {
 }
 /* Первое место — Золото */
 .leaderboard-list .leader-item:nth-child(1) {
-    border-color: #ffa600;
-    box-shadow: 0 0px 10px #ffa600;
+    border-color: rgba(255, 166, 0, 1);
+    box-shadow: 0 0px 8px rgba(255, 166, 0, 0.5);
 }
 .leaderboard-list .leader-item:nth-child(1) .rank,
 .leader-item:nth-child(1) .name,
 .leader-item:nth-child(1) .score {
-    color: #ffa600;
+    color: rgba(255, 166, 0, 1);
 }
 
 /* Второе место — Серебро */
 .leaderboard-list .leader-item:nth-child(2) {
-    border-color: #b7b7b7;
-    box-shadow: 0 0px 7px #b7b7b7;
+    border-color: rgba(183, 183, 183, 1);
+    box-shadow: 0 0px 8px rgba(183, 183, 183, 0.8);
 }
 .leaderboard-list .leader-item:nth-child(2) .rank,
 .leader-item:nth-child(2) .name,
 .leader-item:nth-child(2) .score {
-    color: #b7b7b7;
+    color: rgba(183, 183, 183, 1);
 }
 
 /* Третье место — Бронза */
 .leaderboard-list .leader-item:nth-child(3) {
-    border-color: #eb7332;
-    box-shadow: 0 0px 4px #eb7332;
+    border-color: rgb(200, 100, 66);
+    box-shadow: 0 0px 8px rgba(200, 100, 66, 0.5);
 }
 .leaderboard-list .leader-item:nth-child(3) .rank,
 .leader-item:nth-child(3) .name,
 .leader-item:nth-child(3) .score {
-    color: #eb7332;
+    color: rgba(200, 100, 66, 1);
 }
 
 .leader-item {
