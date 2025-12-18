@@ -919,7 +919,7 @@ function reset() {
     if (state.lastResult === 'win') {
         welcomeText = state.streak >= 50 ? "Максимальная сложность!" : "Сложность повысилась!";
     } else if (state.lastResult === 'almost') {
-        welcomeText = "Попробуем ещё?";
+        welcomeText = "Сейчас получится!";
     } else if (state.lastResult === 'lose') {
         welcomeText = "Начнём сначала?";
     }
