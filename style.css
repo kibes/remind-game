@@ -626,6 +626,17 @@ h1 {
     opacity: 1;
     transform: translateY(0) scale(1);
 }
+/* В начало или конец style.css */
+#snow-canvas {
+    pointer-events: none; /* Чтобы снег не мешал нажимать на кнопки */
+    z-index: 0; /* Снег будет за игровым контейнером, но над фоном body */
+}
+
+.game-container {
+    /* Проверьте, чтобы у контейнера был z-index выше 1 */
+    position: relative;
+    z-index: 10; 
+}
 
 .close-modal {
     position: absolute;
@@ -688,6 +699,7 @@ h1 {
 /* Первое место — Золото */
 .leaderboard-list .leader-item:nth-child(1) {
     border-color: #ffa600;
+    box-shadow: 0 0px 10px #ffa600;
 }
 .leaderboard-list .leader-item:nth-child(1) .rank,
 .leader-item:nth-child(1) .name,
@@ -697,22 +709,24 @@ h1 {
 
 /* Второе место — Серебро */
 .leaderboard-list .leader-item:nth-child(2) {
-    border-color: #C0C0C0;
+    border-color: #b7b7b7;
+    box-shadow: 0 0px 7px #b7b7b7;
 }
 .leaderboard-list .leader-item:nth-child(2) .rank,
 .leader-item:nth-child(2) .name,
 .leader-item:nth-child(2) .score {
-    color: #C0C0C0;
+    color: #b7b7b7;
 }
 
 /* Третье место — Бронза */
 .leaderboard-list .leader-item:nth-child(3) {
-    border-color: #d76528;
+    border-color: #eb7332;
+    box-shadow: 0 0px 4px #eb7332;
 }
 .leaderboard-list .leader-item:nth-child(3) .rank,
 .leader-item:nth-child(3) .name,
 .leader-item:nth-child(3) .score {
-    color: #d76528;
+    color: #eb7332;
 }
 
 .leader-item {
