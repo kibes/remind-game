@@ -741,6 +741,8 @@ function getMemorizeTime() {
 }
 
 function finalizeTarget() {
+    // Сброс серии на сервере в 0 именно здесь
+    resetStreakOnServer(); 
     state.gamePhase = 'memorizing';
     state.parts.forEach(p => {
         const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
@@ -772,8 +774,6 @@ function finalizeTarget() {
 }
 
 function startSelecting() {
-    // Сброс серии на сервере в 0 именно здесь
-    resetStreakOnServer(); 
 
     state.gamePhase = 'selecting';
     state.currentPart = 0;
