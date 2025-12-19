@@ -217,29 +217,47 @@ async function showLeaderboard() {
     }
 
     try {
-        // 1. Получаем ТОП-5
-        const { data: topPlayers, error } = await supabaseClient
+        // 1. Получаем ТОП-5. Сортируем: сначала MAX_STREAK (убывание), потом RECORD_AT (возрастание)
+        const { data: topPlayers, error: topError } = await supabaseClient
             .from('players')
-            .select('username, max_streak, user_id')
+            .select('username, max_streak, user_id, record_at')
             .order('max_streak', { ascending: false })
+            .order('record_at', { ascending: true })
             .limit(5);
 
-        if (error) throw error;
+        if (topError) throw topError;
 
-        // 2. Получаем место текущего пользователя (считаем сколько людей имеют рекорд выше)
         let userRank = "?";
-        if (tg?.initDataUnsafe?.user) {
-            const { count } = await supabaseClient
+        const currentUserId = tg?.initDataUnsafe?.user?.id;
+
+        if (currentUserId) {
+            // 2. Получаем данные текущего игрока, чтобы знать его record_at
+            const { data: me, error: meError } = await supabaseClient
                 .from('players')
-                .select('*', { count: 'exact', head: true })
-                .gt('max_streak', state.maxStreak);
-            userRank = (count || 0) + 1;
+                .select('max_streak, record_at')
+                .eq('user_id', currentUserId)
+                .maybeSingle();
+
+            if (me) {
+                // 3. Считаем ранг: сколько людей (лучше тебя) ИЛИ (такие же как ты, но побили рекорд раньше)
+                // Используем формат ISO для даты, чтобы PostgreSQL корректно сравнил строки/даты
+                const myRecordAt = me.record_at; 
+                
+                const { count, error: countError } = await supabaseClient
+                    .from('players')
+                    .select('*', { count: 'exact', head: true })
+                    .or(`max_streak.gt.${me.max_streak},and(max_streak.eq.${me.max_streak},record_at.lt."${myRecordAt}")`);
+
+                if (!countError) {
+                    userRank = (count || 0) + 1;
+                }
+            }
         }
 
         renderLeaderboard(topPlayers, userRank);
     } catch (e) {
-        console.error(e);
-        elements.leaderboardList.innerHTML = 'Ошибка загрузки';
+        console.error('Ошибка лидерборда:', e);
+        elements.leaderboardList.innerHTML = '<div style="text-align:center; color:#db4e4e">Ошибка загрузки</div>';
     }
 }
 
@@ -248,7 +266,7 @@ function renderLeaderboard(players, myRank) {
     const currentUserId = tg?.initDataUnsafe?.user?.id;
 
     players.forEach((player, index) => {
-        const isMe = player.user_id === currentUserId;
+        const isMe = String(player.user_id) === String(currentUserId);
         const item = document.createElement('div');
         item.className = `leader-item ${isMe ? 'user-special' : ''}`;
         item.innerHTML = `
@@ -259,13 +277,13 @@ function renderLeaderboard(players, myRank) {
         elements.leaderboardList.appendChild(item);
     });
 
-    // Если игрока нет в топ-5, показываем его отдельно внизу
-    const isInTop5 = players.some(p => p.user_id === currentUserId);
+    // Если игрока нет в первой пятерке по результатам сортировки
+    const isInTop5 = players.some(p => String(p.user_id) === String(currentUserId));
+    
     if (!isInTop5 && tg?.initDataUnsafe?.user) {
         const myName = tg.initDataUnsafe.user.first_name || 'Вы';
         elements.userRankContainer.innerHTML = `
-            <div style="width: 80%; margin: 15px auto; border-top: 2px solid #db4e4e;"></div>
-            
+            <div style="width: 80%; margin: 15px auto; border-top: 2px solid #db4e4e; opacity: 0.5;"></div>
             <div class="leader-item user-special">
                 <span class="rank">${myRank}</span>
                 <span class="name">${myName}</span>
