@@ -217,47 +217,49 @@ async function showLeaderboard() {
     }
 
     try {
-        // 1. Получаем ТОП-5. Сортируем: сначала MAX_STREAK (убывание), потом RECORD_AT (возрастание)
-        const { data: topPlayers, error: topError } = await supabaseClient
-            .from('players')
-            .select('username, max_streak, user_id, record_at')
-            .order('max_streak', { ascending: false })
-            .order('record_at', { ascending: true })
-            .limit(5);
-
-        if (topError) throw topError;
-
-        let userRank = "?";
         const currentUserId = tg?.initDataUnsafe?.user?.id;
 
-        if (currentUserId) {
-            // 2. Получаем данные текущего игрока, чтобы знать его record_at
-            const { data: me, error: meError } = await supabaseClient
+        // Запускаем запросы ОДНОВРЕМЕННО через Promise.all
+        const promises = [
+            supabaseClient
                 .from('players')
-                .select('max_streak, record_at')
-                .eq('user_id', currentUserId)
-                .maybeSingle();
+                .select('username, max_streak, user_id, record_at')
+                .order('max_streak', { ascending: false })
+                .order('record_at', { ascending: true })
+                .limit(5)
+        ];
 
-            if (me) {
-                // 3. Считаем ранг: сколько людей (лучше тебя) ИЛИ (такие же как ты, но побили рекорд раньше)
-                // Используем формат ISO для даты, чтобы PostgreSQL корректно сравнил строки/даты
-                const myRecordAt = me.record_at; 
-                
-                const { count, error: countError } = await supabaseClient
+        // Добавляем запрос данных пользователя, если он залогинен
+        if (currentUserId) {
+            promises.push(
+                supabaseClient
                     .from('players')
-                    .select('*', { count: 'exact', head: true })
-                    .or(`max_streak.gt.${me.max_streak},and(max_streak.eq.${me.max_streak},record_at.lt."${myRecordAt}")`);
+                    .select('max_streak, record_at')
+                    .eq('user_id', currentUserId)
+                    .maybeSingle()
+            );
+        }
 
-                if (!countError) {
-                    userRank = (count || 0) + 1;
-                }
-            }
+        const results = await Promise.all(promises);
+        const topPlayers = results[0].data;
+        const me = results[1]?.data;
+
+        let userRank = "?";
+
+        if (me) {
+            // Только этот запрос останется ждать данных от 'me'
+            const { count } = await supabaseClient
+                .from('players')
+                .select('*', { count: 'exact', head: true })
+                .or(`max_streak.gt.${me.max_streak},and(max_streak.eq.${me.max_streak},record_at.lt."${me.record_at}")`);
+            
+            userRank = (count || 0) + 1;
         }
 
         renderLeaderboard(topPlayers, userRank);
     } catch (e) {
-        console.error('Ошибка лидерборда:', e);
-        elements.leaderboardList.innerHTML = '<div style="text-align:center; color:#db4e4e">Ошибка загрузки</div>';
+        console.error('Ошибка:', e);
+        elements.leaderboardList.innerHTML = 'Ошибка загрузки';
     }
 }
 
