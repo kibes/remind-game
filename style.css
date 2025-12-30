@@ -769,6 +769,15 @@ h1 {
     background: #db4e4e;
     transform: rotate(45deg);
 }
+#snow-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* Чтобы клики проходили сквозь снег в игру */
+    z-index: 9999; /* Самый высокий слой, поверх всех меню */
+}
 
 
 /* ОПТИМИЗАЦИЯ ДЛЯ TELEGRAM И МОБИЛЬНЫХ */
