@@ -767,17 +767,10 @@ function finalizeTarget() {
     // Сброс серии на сервере в 0 именно здесь
     resetStreakOnServer(); 
     state.gamePhase = 'memorizing';
-
-    // ФИКСИРОВАННЫЙ ПЕРСОНАЖ:
-    // Кожа 1, Голова 8, Тело 9, Аксессуар 8
-    // Используем find, чтобы найти объекты с нужным ID в массивах загруженных ресурсов
-    state.target = {
-        skin: state.loaded.skin.find(item => item.id === 1),
-        head: state.loaded.head.find(item => item.id === 8),
-        body: state.loaded.body.find(item => item.id === 9),
-        accessory: state.loaded.accessory.find(item => item.id === 8)
-    };
-
+    state.parts.forEach(p => {
+        const randomIndex = Math.floor(Math.random() * state.partCounts[p]);
+        state.target[p] = getRandomOrderItem(p, randomIndex);
+    });
     render(elements.characterDisplay, state.target);
     
     setTimeout(() => {
